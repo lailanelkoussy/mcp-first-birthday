@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  gradio-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gradio-mcp-app
+    ports:
+      - "7860:7860"  # Map host port 7860 to container port 7860
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - WEAVIATE_HOST=weaviate
+      - WEAVIATE_PORT=8080
+      - WEAVIATE_GRPC_PORT=50051
+      - PORT=4000
+    volumes:
+      # Optional: mount local code for development
+      - ./gradio_app.py:/app/gradio_app.py:ro
+      - ./pedagogia_graph_code_repo:/app/pedagogia_graph_code_repo:ro
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
