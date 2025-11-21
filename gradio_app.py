@@ -37,7 +37,7 @@ def initialize_knowledge_graph(
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
         code_index_kwargs = {
-            "index_type": "keyword-only",
+            "index_type": "hybrid",
         }
         )
     elif repo_url:
@@ -52,7 +52,7 @@ def initialize_knowledge_graph(
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
         code_index_kwargs = {
-            "index_type": "keyword-only",
+            "index_type": "hybrid",
         }
         )
     elif repo_path:
@@ -67,7 +67,7 @@ def initialize_knowledge_graph(
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
         code_index_kwargs = {
-            "index_type": "keyword-only",
+            "index_type": "hybrid",
         }
         )
     else:

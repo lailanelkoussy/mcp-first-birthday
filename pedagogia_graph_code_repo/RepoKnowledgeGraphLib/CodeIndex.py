@@ -98,14 +98,14 @@ class CodeIndex:
                 emb = np.array(self.model_service.embed_query(query), dtype=np.float32)
                 q = self.table.search(
                     emb,
-                    vector_column="vector"
+                    vector_column_name="vector"
                 )
 
             # ---------------------- HYBRID ----------------------------
             else:
                 emb = np.array(self.model_service.embed_query(query), dtype=np.float32)
                 q = (
-                    self.table.search(emb, vector_column="vector")
+                    self.table.search(emb, vector_column_name="vector")
                     .where(
                         f"content LIKE '%{query}%' OR name LIKE '%{query}%' OR description LIKE '%{query}%'",
                         prefilter=False
