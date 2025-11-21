@@ -1,0 +1,6 @@
+- better unit testing
+- document unit testing
+- add git history with versioning (navigate current history as default, have option to see commit history + affected files, compare chunks of code between versions)
+- add better langfuse tracing for mcp server
+
+- Add import detection in Entity Extraction

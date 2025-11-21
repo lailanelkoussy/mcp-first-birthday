@@ -1,0 +1,48 @@
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: mcp-server
+    environment:
+      - WEAVIATE_HOST=weaviate
+      - WEAVIATE_PORT=8080
+      - WEAVIATE_GRPC_PORT=50051
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    volumes:
+      - /home/laila-elkoussy/PycharmProjects/pedagogia_graph_code_repo:/repo
+    working_dir: /repo
+    # Use stdin_open and tty for stdio transport
+    stdin_open: true
+    tty: true
+    # Command to run the MCP server with stdio transport
+    command: python /repo/launch_mcp_server_vscode.py --repo-path /repo
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.6
+    container_name: weaviate
+    environment:
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - QUERY_DEFAULTS_LIMIT=25
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=
+      - CLUSTER_HOSTNAME=node1
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  weaviate-data:
+    driver: local
+

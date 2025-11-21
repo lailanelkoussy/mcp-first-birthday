@@ -1,0 +1,107 @@
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.6
+    container_name: weaviate
+    environment:
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - QUERY_DEFAULTS_LIMIT=25
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=
+      - CLUSTER_HOSTNAME=node1
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  vllm-embed:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-embed
+    ports:
+      - "8081:8081"
+    command: >
+      python -m vllm.entrypoints.openai.api_server
+        --model Salesforce/SFR-Embedding-Code-400M_R
+        --port 8081
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/v1/models"]  # vLLM exposes an OpenAI-compatible /v1/models endpoint
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s  # give time for model to load
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    # For older Compose versions, uncomment the next line:
+    # runtime: nvidia
+
+  vllm-model:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-model
+    ports:
+      - "8082:8082"
+    command: >
+      python -m vllm.entrypoints.openai.api_server
+        --model meta-llama/Llama-3.2-3B-Instruct
+        --port 8082
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s  # larger model → longer startup time
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+  app-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-runner
+    environment:
+      - WEAVIATE_HOST=weaviate
+      - WEAVIATE_PORT=8080
+      - WEAVIATE_GRPC_PORT=50051
+    volumes:
+      - .:/app
+      - /host/path:/data/repo  # <-- Replace /host/path with your actual path
+    command: python test_vllm.py --path-name /data/repo
+    depends_on:
+      weaviate:
+        condition: service_healthy
+      vllm-embed:
+        condition: service_healthy
+      vllm-model:
+        condition: service_healthy
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    volumes:
+      - .:/app
+    command: python RepoKnowledgeGraphLib/mcp_server.py
+    depends_on:
+      - weaviate
+
+volumes:
+  weaviate-data:
+    driver: local
+

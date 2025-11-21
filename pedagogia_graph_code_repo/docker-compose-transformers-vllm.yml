@@ -1,0 +1,49 @@
+services:
+  app-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-runner
+    environment:
+      - WEAVIATE_HOST=weaviate
+      - WEAVIATE_PORT=8080
+      - WEAVIATE_GRPC_PORT=50051
+     # - OPENAI_MODEL_ID
+     # - OPENAI_BASE_URL
+     # - OPENAI_API_KEY
+    depends_on:
+      -  weaviate
+    volumes:
+      - .:/app
+      - ./RepoKnowledgeGraphLib:/data/repo  # <-- Replace ./RepoKnowledgeGraphLib with your actual path
+    # Default command runs test_transformers.py; override with e.g. `docker compose -f docker-compose-transformers.yml run app-runner python test_vllm.py`
+    command: python test_duplicate_entity_prevention.py
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.6
+    container_name: weaviate
+    environment:
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - QUERY_DEFAULTS_LIMIT=25
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=
+      - CLUSTER_HOSTNAME=node1
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  
+
+volumes:
+  weaviate-data:
+    driver: local
+

@@ -1,0 +1,126 @@
+services:
+  # MCP Server - runs the actual MCP server over HTTP
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    environment:
+      - WEAVIATE_HOST=weaviate
+      - WEAVIATE_PORT=8080
+      - WEAVIATE_GRPC_PORT=50051
+      - PORT=4000
+      - REPO_URL=https://github.com/lailanelkoussy/efficient-llm-training-locally
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./RepoKnowledgeGraphLib:/data/repo
+    ports:
+      - "4000:4000"
+    # Run the MCP server (it will communicate via HTTP)
+    command: python run_mcp_server.py
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f -s -o /dev/null -w '%{http_code}' http://localhost:4000/health | grep -q '^200$'" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  vllm:
+    image: vllm/vllm-openai:v0.11.0
+    container_name: vllm
+    ports:
+      - "8000:8000"
+    environment:
+      VLLM_MODEL: HuggingFaceTB/SmolLM3-3B   # <--- change to your model
+      #VLLM_API_KEY: "none"               # not required, but prevents warnings
+    env_file:
+      - .env
+    command: >
+      --model HuggingFaceTB/SmolLM3-3B
+      --host 0.0.0.0
+      --port 8000
+    #--max-model-len 15000
+    volumes:
+      - ./models:/models
+    # GPU SUPPORT (uncomment if needed)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/v1/models" ]
+      interval: 30s
+      timeout: 20s
+      retries: 10
+      start_period: 60s
+
+  # Smolagent Client - AI agent that connects to MCP server over HTTP
+  smolagent-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smolagent-client
+    env_file: ".env"
+    environment:
+      - WEAVIATE_HOST=weaviate
+      - WEAVIATE_PORT=8080
+      - WEAVIATE_GRPC_PORT=50051
+      - MCP_SERVER_URL=http://mcp-server:4000/mcp
+      - MAX_STEPS=10
+      # OpenAI Configuration (loaded from .env file)
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
+      vllm:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./RepoKnowledgeGraphLib:/data/repo
+      - ./.env:/app/.env
+    # Run the smolagent client with a mission - both scripts now support HTTP connection
+    # You can use either test_mcp_smolagent_openai.py or test_mcp_smolagent_remote.py
+    # Modify the --mission parameter to test different queries
+    command: python test_mcp_smolagent_remote.py --mission "what does the class DataTrainingArguments do?"
+    # Alternative: use the OpenAI-specific script
+    # command: python test_mcp_smolagent_openai.py --mission "explain to me what does this repo do"
+    # For interactive mode, uncomment the following and comment out the mission above:
+    # command: python test_mcp_smolagent_remote.py --interactive
+    # stdin_open: true
+    # tty: true
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.6
+    container_name: weaviate
+    environment:
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - QUERY_DEFAULTS_LIMIT=25
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=
+      - CLUSTER_HOSTNAME=node1
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  weaviate-data:
+    driver: local
+

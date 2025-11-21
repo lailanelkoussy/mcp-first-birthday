@@ -1,0 +1,111 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.11.0
+    container_name: vllm
+    ports:
+      - "8000:8000"
+    environment:
+      VLLM_MODEL: HuggingFaceTB/SmolLM3-3B   # <--- change to your model
+      #VLLM_API_KEY: "none"               # not required, but prevents warnings
+    env_file:
+      - .env
+    command: >
+      --model HuggingFaceTB/SmolLM3-3B
+      --host 0.0.0.0
+      --port 8000
+    #--max-model-len 15000
+    volumes:
+      - ./models:/models
+    # GPU SUPPORT (uncomment if needed)
+    deploy:
+      resources:
+         reservations:
+           devices:
+             - driver: nvidia
+               count: all
+               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models" ]
+      interval: 30s
+      timeout: 20s
+      retries: 10
+      start_period: 60s
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "3000:8080"
+    environment:
+      WEBUI_AUTH: "false"
+      OPENAI_API_BASE_URL: "http://vllm:8000/v1"
+      # Optional if you want a dummy key:
+      OPENAI_API_KEY: "dummy"
+    volumes:
+      - open-webui:/app/backend/data
+    depends_on:
+      vllm: 
+          condition: service_healthy
+      mcp-server: 
+          condition: service_healthy 
+          
+  # MCP Server - runs the actual MCP server via HTTP
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    environment:
+      - WEAVIATE_HOST=weaviate
+      - WEAVIATE_PORT=8080
+      - WEAVIATE_GRPC_PORT=50051
+      - PORT=4000
+      - REPO_URL=https://github.com/lailanelkoussy/transformers-streaming-api
+      - FILE_NAME=/app/data/astropy/multihop_knowledge_graph_with_embedding.json
+    env_file:
+      - .env
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    volumes:
+      - .:/app
+       - /home/laila-elkoussy/Downloads/lrec/lrec_submission:/data/repo
+    ports:
+      - "4000:4000"
+    # Run the MCP server (it will communicate via HTTP)
+    command: python run_mcp_server.py
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -s -X GET http://localhost:4000/health "]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.6
+    container_name: weaviate
+    environment:
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - QUERY_DEFAULTS_LIMIT=25
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=
+      - CLUSTER_HOSTNAME=node1
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  weaviate-data:
+    driver: local
+  open-webui:
