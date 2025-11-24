@@ -37,7 +37,7 @@ def initialize_knowledge_graph(
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
         code_index_kwargs = {
-            "index_type": "hybrid",
+            "index_type": "keyword-only",
         }
         )
     elif repo_url:
@@ -52,7 +52,7 @@ def initialize_knowledge_graph(
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
         code_index_kwargs = {
-            "index_type": "hybrid",
+            "index_type": "keyword-only",
         }
         )
     elif repo_path:
@@ -67,7 +67,7 @@ def initialize_knowledge_graph(
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
         code_index_kwargs = {
-            "index_type": "hybrid",
+            "index_type": "keyword-only",
         }
         )
     else:
@@ -559,14 +559,20 @@ def get_related_chunks(chunk_id: str, relation_type: str = "calls") -> str:
         return f"Error: {str(e)}"
 
 
-def list_all_entities(limit: int = 50) -> str:
+def list_all_entities(
+    limit: int = 50,
+    entity_type: Optional[str] = None,
+    declared_in_repo: Optional[bool] = None
+) -> str:
     """
-    List all entities tracked in the knowledge graph.
+    List all entities tracked in the knowledge graph with filtering options.
 
     Shows entity types, declaration counts, and usage counts.
 
     Args:
         limit: Maximum number of entities to return (default: 50)
+        entity_type: Filter by entity type ('class', 'function', 'method', 'variable', 'parameter', 'function_call', 'method_call')
+        declared_in_repo: If True, only return entities with declarations. If False, only entities without declarations. If None, return all.
 
     Returns:
         str: A formatted string with all entities
@@ -578,17 +584,52 @@ def list_all_entities(limit: int = 50) -> str:
         if not knowledge_graph.entities:
             return "No entities found in the knowledge graph."
 
-        result = f"All Entities ({len(knowledge_graph.entities)} total):\n"
+        # Filter entities based on criteria
+        filtered_entities = {}
+        for entity_name, info in knowledge_graph.entities.items():
+            # Filter by entity type if specified
+            if entity_type is not None:
+                entity_types = [t.lower() if t else '' for t in info.get('type', [])]
+                if entity_type.lower() not in entity_types:
+                    continue
+
+            # Filter by declared_in_repo if specified
+            if declared_in_repo is not None:
+                has_declaration = len(info.get('declaring_chunk_ids', [])) > 0
+                if declared_in_repo and not has_declaration:
+                    continue
+                if not declared_in_repo and has_declaration:
+                    continue
+
+            filtered_entities[entity_name] = info
+
+        # Build the response with filtered entities
+        if not filtered_entities:
+            filter_desc = []
+            if entity_type:
+                filter_desc.append(f"type={entity_type}")
+            if declared_in_repo is not None:
+                filter_desc.append(f"declared_in_repo={declared_in_repo}")
+            filter_text = f" (filtered by {', '.join(filter_desc)})" if filter_desc else ""
+            return f"No entities found{filter_text}."
+
+        result = f"All Entities ({len(filtered_entities)} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, (entity_name, info) in enumerate(list(knowledge_graph.entities.items())[:limit], 1):
+        for i, (entity_name, info) in enumerate(list(filtered_entities.items())[:limit], 1):
             result += f"{i}. {entity_name}\n"
             result += f"   Types: {', '.join(info.get('type', ['Unknown']))}\n"
             result += f"   Declarations: {len(info.get('declaring_chunk_ids', []))}\n"
             result += f"   Usages: {len(info.get('calling_chunk_ids', []))}\n\n"
 
-        if len(knowledge_graph.entities) > limit:
-            result += f"... and {len(knowledge_graph.entities) - limit} more entities\n"
+        if len(filtered_entities) > limit:
+            result += f"... and {len(filtered_entities) - limit} more entities\n"
+
+        # Add filter information
+        if entity_type:
+            result += f"\n(Filtered by type={entity_type})\n"
+        if declared_in_repo is not None:
+            result += f"(Filtered by declared_in_repo={declared_in_repo})\n"
 
         return result
     except Exception as e:
@@ -1116,11 +1157,32 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     entities_limit = gr.Slider(minimum=1, maximum=200, value=50, step=1, label="Result Limit")
+                    entities_type_filter = gr.Dropdown(
+                        choices=["", "class", "function", "method", "variable", "parameter", "function_call", "method_call"],
+                        value="",
+                        label="Entity Type Filter (optional)",
+                        info="Leave empty for all types"
+                    )
+                    entities_declared_filter = gr.Radio(
+                        choices=[("All", "all"), ("Declared in repo", "true"), ("Not declared in repo", "false")],
+                        value="all",
+                        label="Declaration Filter"
+                    )
                     entities_btn = gr.Button("List All Entities", variant="primary")
                 with gr.Column():
                     entities_output = gr.Textbox(label="Entities", lines=20, max_lines=30)
 
-            entities_btn.click(fn=list_all_entities, inputs=entities_limit, outputs=entities_output)
+            def list_entities_wrapper(limit, entity_type, declared_filter):
+                # Convert filter values to appropriate types
+                entity_type_val = entity_type if entity_type else None
+                declared_val = None if declared_filter == "all" else (declared_filter == "true")
+                return list_all_entities(limit, entity_type_val, declared_val)
+
+            entities_btn.click(
+                fn=list_entities_wrapper,
+                inputs=[entities_limit, entities_type_filter, entities_declared_filter],
+                outputs=entities_output
+            )
 
             gr.Markdown("---")
             gr.Markdown("### Go to definition")
