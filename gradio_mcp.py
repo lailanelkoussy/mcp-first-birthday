@@ -21,7 +21,8 @@ def initialize_knowledge_graph(
     skip_dirs: Optional[str] = None,
     index_nodes: bool = True,
     describe_nodes: bool = False,
-    extract_entities: bool = True
+    extract_entities: bool = True, 
+    code_index_kwargs: Optional[dict] = None
 ):
     """Initialize the knowledge graph from various sources."""
     global knowledge_graph
@@ -36,9 +37,7 @@ def initialize_knowledge_graph(
                 "embedder_type": "sentence-transformers",
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
-        code_index_kwargs = {
-            "index_type": "keyword-only",
-        }
+        code_index_kwargs=code_index_kwargs
         )
     elif repo_url:
         knowledge_graph = RepoKnowledgeGraph.from_repo(
@@ -51,9 +50,7 @@ def initialize_knowledge_graph(
                 "embedder_type": "sentence-transformers",
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
-        code_index_kwargs = {
-            "index_type": "keyword-only",
-        }
+            code_index_kwargs=code_index_kwargs
         )
     elif repo_path:
         knowledge_graph = RepoKnowledgeGraph.from_path(
@@ -66,9 +63,7 @@ def initialize_knowledge_graph(
                 "embedder_type": "sentence-transformers",
                 "embed_model_name": "Salesforce/SFR-Embedding-Code-400M_R",
             },
-        code_index_kwargs = {
-            "index_type": "keyword-only",
-        }
+            code_index_kwargs=code_index_kwargs
         )
     else:
         raise ValueError("Must provide either repo_path, graph_file, or repo_url")
@@ -1329,11 +1324,39 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=7860, help="Port to bind to")
     parser.add_argument("--share", action="store_true", help="Create a public link")
+    parser.add_argument("--code-index-type", type=str, default="hybrid", help="Type of code index to use", choices=["keyword-only", "embedding-only", "hybrid"])
+    parser.add_argument("--code-index-backend", type=str, default="lancedb", help="Backend for code index", choices=["lancedb", "weaviate"])
+    parser.add_argument("--code-index-embedding-batch-size", type=int, default=20, help="Batch size for embeddings")
+    parser.add_argument("--code-index-use-embed", action="store_true", default=True, help="Use embeddings")
+    parser.add_argument("--code-index-db-path", type=str, help="Database path for code index")
+    parser.add_argument("--code-index-host", type=str, help="Host for code index backend")
+    parser.add_argument("--code-index-port", type=int, help="Port for code index backend")
+    parser.add_argument("--code-index-grpc-port", type=int, help="gRPC port for code index backend")
+    
 
     args = parser.parse_args()
 
     # Initialize knowledge graph
     print("Initializing knowledge graph...")
+    
+    # Build code_index_kwargs from parsed arguments
+    code_index_kwargs = {
+        "index_type": args.code_index_type,
+        "backend": args.code_index_backend,
+        "embedding_batch_size": args.code_index_embedding_batch_size,
+        "use_embed": args.code_index_use_embed,
+    }
+    
+    # Add optional parameters only if they are provided
+    if args.code_index_db_path:
+        code_index_kwargs["db_path"] = args.code_index_db_path
+    if args.code_index_host:
+        code_index_kwargs["host"] = args.code_index_host
+    if args.code_index_port:
+        code_index_kwargs["port"] = args.code_index_port
+    if args.code_index_grpc_port:
+        code_index_kwargs["grpc_port"] = args.code_index_grpc_port
+    
     initialize_knowledge_graph(
         repo_path=args.repo_path,
         graph_file=args.graph_file,
@@ -1341,7 +1364,8 @@ def main():
         skip_dirs=args.skip_dirs,
         index_nodes=not args.no_index,
         describe_nodes=args.describe_nodes,
-        extract_entities=not args.no_extract_entities
+        extract_entities=not args.no_extract_entities, 
+        code_index_kwargs=code_index_kwargs
     )
     print("Knowledge graph initialized!")
 
