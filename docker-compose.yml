@@ -17,7 +17,7 @@ services:
       - PORT=4000
     volumes:
       # Optional: mount local code for development
-      - ./gradio_app.py:/app/gradio_app.py:ro
+      - ./gradio_mcp.py:/app/gradio_mcp.py:ro
       - ./pedagogia_graph_code_repo:/app/pedagogia_graph_code_repo:ro
     stdin_open: true
     tty: true
