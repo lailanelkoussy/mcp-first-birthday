@@ -229,98 +229,97 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
     """Create the Gradio chat interface with model configuration."""
     
     with gr.Blocks(title="Knowledge Graph Chat Agent", theme=gr.themes.Soft()) as demo:
-        gr.Markdown("""
-        # 🤖 Knowledge Graph Chat Agent
         
-        Chat with an AI agent that can explore and analyze your codebase knowledge graph.
-        Ask questions about your code structure, functions, classes, dependencies, and more!
-        """)
-        
-        # Configuration Section
-        with gr.Accordion("⚙️ Model Configuration", open=not agent.is_ready()):
-            gr.Markdown("Configure your AI model before starting the chat. The knowledge graph tools are already connected!")
+        # ==================== INITIALIZATION SECTION ====================
+        with gr.Column(visible=not agent.is_ready()) as init_section:
+            gr.Markdown("""
+            # 🤖 Knowledge Graph Chat Agent
             
-            with gr.Row():
-                model_type = gr.Dropdown(
-                    choices=["openai", "azure"],
-                    value="openai",
-                    label="Model Type",
-                    info="Choose between OpenAI or Azure OpenAI"
-                )
-                model_name = gr.Textbox(
-                    label="Model Name",
-                    value=os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini'),
-                    info="e.g., gpt-4o-mini, gpt-4, gpt-3.5-turbo"
-                )
+            Configure your AI model to start chatting with the knowledge graph.
+            The MCP server tools are already connected!
+            """)
             
-            with gr.Row():
-                api_key = gr.Textbox(
-                    label="API Key",
-                    value=os.environ.get('OPENAI_API_KEY', ''),
-                    type="password",
-                    info="Your OpenAI or Azure OpenAI API key"
-                )
-                base_url = gr.Textbox(
-                    label="Base URL",
-                    value=os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
-                    info="API endpoint URL"
-                )
+            with gr.Group():
+                gr.Markdown("### ⚙️ Model Configuration")
+                
+                with gr.Row():
+                    model_type = gr.Dropdown(
+                        choices=["openai", "azure"],
+                        value="openai",
+                        label="Model Type",
+                        info="Choose between OpenAI or Azure OpenAI"
+                    )
+                    model_name = gr.Textbox(
+                        label="Model Name",
+                        value=os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini'),
+                        info="e.g., gpt-4o-mini, gpt-4, gpt-3.5-turbo"
+                    )
+                
+                with gr.Row():
+                    api_key = gr.Textbox(
+                        label="API Key",
+                        value=os.environ.get('OPENAI_API_KEY', ''),
+                        type="password",
+                        info="Your OpenAI or Azure OpenAI API key"
+                    )
+                    base_url = gr.Textbox(
+                        label="Base URL",
+                        value=os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+                        info="API endpoint URL"
+                    )
+                
+                with gr.Row():
+                    api_version = gr.Textbox(
+                        label="API Version (Azure only)",
+                        value=os.environ.get('OPENAI_API_VERSION', '2024-02-15-preview'),
+                        info="Required for Azure OpenAI"
+                    )
+                    max_steps = gr.Number(
+                        label="Max Steps",
+                        value=int(os.getenv("MAX_STEPS", 5)),
+                        minimum=1,
+                        maximum=20,
+                        info="Maximum reasoning steps for the agent"
+                    )
+                
+                init_status = gr.Markdown("**Status:** ⚠️ Please configure and initialize the agent")
+                init_btn = gr.Button("🚀 Initialize Agent", variant="primary", size="lg")
+        
+        # ==================== CHAT SECTION ====================
+        with gr.Column(visible=agent.is_ready()) as chat_section:
+            gr.Markdown("""
+            # 🤖 Knowledge Graph Chat Agent
             
-            with gr.Row():
-                api_version = gr.Textbox(
-                    label="API Version (Azure only)",
-                    value=os.environ.get('OPENAI_API_VERSION', '2024-02-15-preview'),
-                    info="Required for Azure OpenAI"
-                )
-                max_steps = gr.Number(
-                    label="Max Steps",
-                    value=int(os.getenv("MAX_STEPS", 5)),
-                    minimum=1,
-                    maximum=20,
-                    info="Maximum reasoning steps for the agent"
-                )
+            Chat with an AI agent that can explore and analyze your codebase knowledge graph.
+            Ask questions about your code structure, functions, classes, dependencies, and more!
+            """)
             
-            init_status = gr.Markdown("**Status:** " + ("✅ Agent Ready!" if agent.is_ready() else "⚠️ Please initialize the agent"))
-            init_btn = gr.Button("Initialize Agent", variant="primary", visible=not agent.is_ready())
-        
-        # Chat Section
-        gr.Markdown("""
-        ### Example Questions:
-        - "What does the class RepoKnowledgeGraph do?"
-        - "Show me all the functions in the codebase"
-        - "Find usages of the search_nodes function"
-        - "What are the main modules in this repository?"
-        - "Explain the architecture of this codebase"
-        """)
-        
-        chatbot = gr.Chatbot(
-            label="Chat History",
-            height=500,
-            show_copy_button=True,
-            type="messages",
-            avatar_images=(None, "🤖")
-        )
-        
-        with gr.Row():
-            msg = gr.Textbox(
-                label="Your Message",
-                placeholder="Initialize the agent first..." if not agent.is_ready() else "Ask me anything about your codebase...",
-                scale=4,
-                lines=2,
-                interactive=agent.is_ready()
+            chatbot = gr.Chatbot(
+                label="Chat History",
+                height=500,
+                show_copy_button=True,
+                type="messages",
+                avatar_images=(None, "🤖")
             )
-            submit_btn = gr.Button("Send", variant="primary", scale=1, interactive=agent.is_ready())
-        
-        with gr.Row():
-            clear_btn = gr.Button("Clear Chat", variant="secondary")
-        
-        gr.Markdown("""
-        ### Tips:
-        - Configure your preferred AI model before starting
-        - Be specific in your questions for better results
-        - You can ask follow-up questions based on previous responses
-        - The agent has access to all MCP server tools for code analysis
-        """)
+            
+            with gr.Row():
+                msg = gr.Textbox(
+                    label="Your Message",
+                    placeholder="Ask me anything about your codebase...",
+                    scale=4,
+                    lines=2
+                )
+                submit_btn = gr.Button("Send", variant="primary", scale=1)
+            
+            with gr.Row():
+                clear_btn = gr.Button("Clear Chat", variant="secondary")
+            
+            gr.Markdown("""
+            ### Tips:
+            - Be specific in your questions for better results
+            - You can ask follow-up questions based on previous responses
+            - The agent has access to all MCP server tools for code analysis
+            """)
         
         # Handle agent initialization
         def initialize_agent(mtype, mname, akey, burl, aversion, msteps):
@@ -335,34 +334,25 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                 agent._initialize_agent(max_steps=int(msteps))
                 return (
                     gr.update(value="**Status:** ✅ Agent Ready!"),
-                    gr.update(visible=False),
-                    gr.update(placeholder="Ask me anything about your codebase...", interactive=True),
-                    gr.update(interactive=True)
+                    gr.update(visible=False),  # Hide init section
+                    gr.update(visible=True)    # Show chat section
                 )
             except Exception as e:
                 error_msg = f"**Status:** ❌ Initialization failed: {str(e)}"
                 return (
                     gr.update(value=error_msg),
-                    gr.update(visible=True),
-                    gr.update(interactive=False),
-                    gr.update(interactive=False)
+                    gr.update(visible=True),   # Keep init section visible
+                    gr.update(visible=False)   # Keep chat section hidden
                 )
         
         init_btn.click(
             fn=initialize_agent,
             inputs=[model_type, model_name, api_key, base_url, api_version, max_steps],
-            outputs=[init_status, init_btn, msg, submit_btn]
+            outputs=[init_status, init_section, chat_section]
         )
         
         # Handle message submission with streaming
         def submit_message(message, history):
-            if not agent.is_ready():
-                history.append(ChatMessage(
-                    role="assistant", 
-                    content="❌ Please initialize the agent first using the configuration section above."
-                ))
-                yield "", history
-                return
             for updated_history in agent.chat(message, history):
                 yield "", updated_history
         
