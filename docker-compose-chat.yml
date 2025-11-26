@@ -1,69 +1,5 @@
-version: '3.8'
-
 services:
-  # MCP Server - runs the actual Knowledge Graph MCP server over HTTP
-  mcp-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mcp-server
-    environment:
-      - WEAVIATE_HOST=weaviate
-      - WEAVIATE_PORT=8080
-      - WEAVIATE_GRPC_PORT=50051
-      - PORT=4000
-      # Specify your repository - change this to your repo
-      - REPO_URL=${REPO_URL:-https://github.com/huggingface/transformers}
-      # Or use a local path instead:
-      # - REPO_PATH=/data/repo
-    env_file:
-      - .env
-    depends_on:
-      weaviate:
-        condition: service_healthy
-    volumes:
-      - ./pedagogia_graph_code_repo:/app
-      - ./pedagogia_graph_code_repo/data:/data
-    ports:
-      - "4000:4000"
-    command: python run_mcp_server.py
-    stdin_open: true
-    tty: true
-    healthcheck:
-      test: [ "CMD-SHELL", "curl -f -s -o /dev/null -w '%{http_code}' http://localhost:4000/health | grep -q '^200$'" ]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 180s
-    networks:
-      - kg-network
-
-  # Weaviate Vector Database
-  weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.28.10
-    container_name: weaviate
-    ports:
-      - "8080:8080"
-      - "50051:50051"
-    environment:
-      QUERY_DEFAULTS_LIMIT: 25
-      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
-      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-      DEFAULT_VECTORIZER_MODULE: 'none'
-      ENABLE_MODULES: ''
-      CLUSTER_HOSTNAME: 'node1'
-    volumes:
-      - weaviate_data:/var/lib/weaviate
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - kg-network
-
-  # Gradio MCP Interface - direct interface to the MCP server
+  # Gradio MCP Interface - runs the MCP server with Gradio UI
   gradio-mcp:
     build:
       context: .
@@ -72,27 +8,26 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
-    env_file:
-      - .env
+      # Specify your repository - change this to your repo
+      - REPO_URL=${REPO_URL:-https://github.com/huggingface/transformers}
     volumes:
-      - .:/app
+      - ./gradio_mcp.py:/app/gradio_mcp.py:ro
+      - ./pedagogia_graph_code_repo:/app/pedagogia_graph_code_repo:ro
     ports:
       - "7860:7860"
-    command: >
-      python gradio_mcp.py
-      --graph-file /data/knowledge_graph.pkl
-      --host 0.0.0.0
-      --port 7860
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     stdin_open: true
     tty: true
     restart: unless-stopped
     networks:
       - kg-network
-    depends_on:
-      weaviate:
-        condition: service_healthy
 
-  # Smolagent Chat Interface - AI-powered chat interface
+  # Smolagent Chat Interface - AI-powered chat interface that connects to gradio-mcp's MCP server
   smolagent-chat:
     build:
       context: .
@@ -101,19 +36,17 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
-      - MCP_SERVER_URL=http://mcp-server:4000/mcp
+      - MCP_SERVER_URL=http://gradio-mcp:7860/gradio_api/mcp/
       - MAX_STEPS=5
       # OpenAI Configuration (loaded from .env file)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o-mini}
       - OPENAI_API_VERSION=${OPENAI_API_VERSION:-2024-02-15-preview}
-    env_file:
-      - .env
     depends_on:
-      mcp-server:
+      gradio-mcp:
         condition: service_healthy
-      weaviate:
+      vllm:
         condition: service_healthy
     volumes:
       - .:/app
@@ -121,7 +54,7 @@ services:
       - "7861:7861"
     command: >
       python smolagent_chat.py
-      --mcp-server-url http://mcp-server:4000/mcp
+      --mcp-server-url http://gradio-mcp:7860/gradio_api/mcp/
       --host 0.0.0.0
       --port 7861
     stdin_open: true
@@ -130,9 +63,42 @@ services:
     networks:
       - kg-network
 
+  
+
+  vllm:
+    image: vllm/vllm-openai:v0.11.0
+    container_name: vllm
+    ports:
+      - "8000:8000"
+    environment:
+      VLLM_MODEL: HuggingFaceTB/SmolLM3-3B   # <--- change to your model
+      #VLLM_API_KEY: "none"               # not required, but prevents warnings
+    env_file:
+      - .env
+    command: >
+      --model HuggingFaceTB/SmolLM3-3B
+      --host 0.0.0.0
+      --port 8000
+    #--max-model-len 15000
+    volumes:
+      - ./models:/models
+    networks:
+      - kg-network
+    # GPU SUPPORT (uncomment if needed)
+    deploy:
+      resources:
+         reservations:
+           devices:
+             - driver: nvidia
+               count: all
+               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models" ]
+      interval: 30s
+      timeout: 20s
+      retries: 10
+      start_period: 60s
+
 networks:
   kg-network:
     driver: bridge
-
-volumes:
-  weaviate_data:
