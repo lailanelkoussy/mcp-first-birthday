@@ -74,7 +74,7 @@ def get_node_info(node_id: str) -> str:
     Get detailed information about a node in the knowledge graph.
 
     Returns information including the node's type, name, description,
-    declared and called entities, and a content preview.
+    declared/called entities, and type-specific details.
 
     Args:
         node_id: The ID of the node to retrieve information for
@@ -90,30 +90,67 @@ def get_node_info(node_id: str) -> str:
             return f"Error: Node '{node_id}' not found in knowledge graph"
 
         node = knowledge_graph.graph.nodes[node_id]['data']
-        declared_entities = getattr(node, 'declared_entities', [])
-        called_entities = getattr(node, 'called_entities', [])
-        content = getattr(node, 'content', None)
-        content_preview = content[:200] + "..." if content and len(content) > 200 else content
+        node_type = getattr(node, 'node_type', 'Unknown')
+        node_class = node.__class__.__name__
+        node_name = getattr(node, 'name', 'Unknown')
+        description = getattr(node, 'description', None)
 
-        result = f"""Node Information:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Node ID: {node_id}
-Class: {node.__class__.__name__}
-Name: {getattr(node, 'name', 'Unknown')}
-Type: {getattr(node, 'node_type', 'Unknown')}
-Description: {getattr(node, 'description', 'N/A')}
+        result = f"Node Information:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        result += f"Node ID: {node_id}\nClass: {node_class}\nName: {node_name}\nType: {node_type}\n"
+        result += f"Description: {description or 'N/A'}\n"
 
-Declared Entities ({len(declared_entities)}):
-{chr(10).join(f"  - {entity}" for entity in declared_entities[:10])}
-{f"  ... and {len(declared_entities) - 10} more" if len(declared_entities) > 10 else ""}
+        if node_class == 'EntityNode' or node_type == 'entity':
+            entity_type = getattr(node, 'entity_type', 'Unknown')
+            declaring_chunk_ids = getattr(node, 'declaring_chunk_ids', [])
+            calling_chunk_ids = getattr(node, 'calling_chunk_ids', [])
+            aliases = getattr(node, 'aliases', [])
 
-Called Entities ({len(called_entities)}):
-{chr(10).join(f"  - {entity}" for entity in called_entities[:10])}
-{f"  ... and {len(called_entities) - 10} more" if len(called_entities) > 10 else ""}
+            result += f"\nEntity Type: {entity_type}\n"
+            result += f"Aliases: {', '.join(aliases) if aliases else 'None'}\n"
+            result += f"Declared in {len(declaring_chunk_ids)} chunk(s):\n"
+            for cid in declaring_chunk_ids[:5]:
+                result += f"  - {cid}\n"
+            if len(declaring_chunk_ids) > 5:
+                result += f"  ... and {len(declaring_chunk_ids) - 5} more\n"
+            result += f"Called in {len(calling_chunk_ids)} chunk(s):\n"
+            for cid in calling_chunk_ids[:5]:
+                result += f"  - {cid}\n"
+            if len(calling_chunk_ids) > 5:
+                result += f"  ... and {len(calling_chunk_ids) - 5} more\n"
+            result += f"\nSummary: Entity {node_id} ({node_name}) — {entity_type} declared in {len(declaring_chunk_ids)} chunk(s) and called in {len(calling_chunk_ids)} chunk(s).\n"
+        else:
+            declared_entities = getattr(node, 'declared_entities', [])
+            called_entities = getattr(node, 'called_entities', [])
 
-Content Preview:
-{content_preview or 'N/A'}
-"""
+            result += f"\nDeclared Entities ({len(declared_entities)}):\n"
+            for entity in declared_entities[:10]:
+                result += f"  - {entity}\n"
+            if len(declared_entities) > 10:
+                result += f"  ... and {len(declared_entities) - 10} more\n"
+
+            result += f"\nCalled Entities ({len(called_entities)}):\n"
+            for entity in called_entities[:10]:
+                result += f"  - {entity}\n"
+            if len(called_entities) > 10:
+                result += f"  ... and {len(called_entities) - 10} more\n"
+
+            # Add content preview for file/chunk nodes
+            if node_type in ['file', 'chunk']:
+                content = getattr(node, 'content', None)
+                content_preview = content[:200] + "..." if content and len(content) > 200 else content
+                result += f"\nContent Preview:\n{content_preview or 'N/A'}\n"
+                if hasattr(node, 'path'):
+                    result += f"Path: {node.path}\n"
+                if hasattr(node, 'language'):
+                    result += f"Language: {node.language}\n"
+                if node_type == 'chunk' and hasattr(node, 'order_in_file'):
+                    result += f"Order in File: {node.order_in_file}\n"
+            elif node_type == 'directory':
+                if hasattr(node, 'path'):
+                    result += f"Path: {node.path}\n"
+
+            result += f"\nSummary: Node {node_id} ({node_name}) — {node_type} with {len(declared_entities)} declared and {len(called_entities)} called entities.\n"
+
         return result
     except Exception as e:
         return f"Error: {str(e)}"
