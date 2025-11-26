@@ -224,6 +224,13 @@ def search_nodes(query: str, limit: int = 10) -> str:
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert limit to int if it's a string (MCP may pass strings)
+        if isinstance(limit, str):
+            try:
+                limit = int(limit)
+            except ValueError:
+                return f"Error: 'limit' must be an integer, got '{limit}'"
+        
         if limit <= 0:
             return "Error: limit must be a positive integer"
 
@@ -243,13 +250,13 @@ def search_nodes(query: str, limit: int = 10) -> str:
                 preview = content[:150] + "..." if len(content) > 150 else content
                 result += f"   Content: {preview}\n"
 
-            declared = res.get('declared_entities', [])
-            if declared:
-                result += f"   Declared: {', '.join(str(e) for e in declared[:5])}\n"
+            declared = res.get('declared_entities', '')
+            if declared and declared != '[]':
+                result += f"   Declared: {declared}\n"
 
-            called = res.get('called_entities', [])
-            if called:
-                result += f"   Called: {', '.join(str(e) for e in called[:5])}\n"
+            called = res.get('called_entities', '')
+            if called and called != '[]':
+                result += f"   Called: {called}\n"
             result += "\n"
 
         return result
@@ -319,6 +326,13 @@ def list_nodes_by_type(node_type: str, limit: int = 20) -> str:
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert limit to int if it's a string (MCP may pass strings)
+        if isinstance(limit, str):
+            try:
+                limit = int(limit)
+            except ValueError:
+                return f"Error: 'limit' must be an integer, got '{limit}'"
+        
         g = knowledge_graph.graph
         matching_nodes = [
             {
@@ -457,6 +471,13 @@ def find_usages(entity_name: str, limit: int = 20) -> str:
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert limit to int if it's a string (MCP may pass strings)
+        if isinstance(limit, str):
+            try:
+                limit = int(limit)
+            except ValueError:
+                return f"Error: 'limit' must be an integer, got '{limit}'"
+        
         if entity_name not in knowledge_graph.entities:
             return f"Error: Entity '{entity_name}' not found in knowledge graph"
 
@@ -613,6 +634,26 @@ def list_all_entities(
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert limit to int if it's a string (MCP may pass strings)
+        if isinstance(limit, str):
+            try:
+                limit = int(limit)
+            except ValueError:
+                return f"Error: 'limit' must be an integer, got '{limit}'"
+        
+        # Handle entity_type - empty string should be treated as None
+        if entity_type == "" or entity_type == "null":
+            entity_type = None
+            
+        # Handle declared_in_repo - convert string to bool if needed
+        if isinstance(declared_in_repo, str):
+            if declared_in_repo.lower() in ("true", "1", "yes"):
+                declared_in_repo = True
+            elif declared_in_repo.lower() in ("false", "0", "no"):
+                declared_in_repo = False
+            elif declared_in_repo.lower() in ("none", "null", "all", ""):
+                declared_in_repo = None
+        
         if not knowledge_graph.entities:
             return "No entities found in the knowledge graph."
 
@@ -727,6 +768,13 @@ def print_tree(root_id: str = "root", max_depth: int = 3) -> str:
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert max_depth to int if it's a string (MCP may pass strings)
+        if isinstance(max_depth, str):
+            try:
+                max_depth = int(max_depth)
+            except ValueError:
+                return f"Error: 'max_depth' must be an integer, got '{max_depth}'"
+        
         g = knowledge_graph.graph
 
         if root_id not in g:
@@ -834,6 +882,13 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10) ->
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert limit to int if it's a string (MCP may pass strings)
+        if isinstance(limit, str):
+            try:
+                limit = int(limit)
+            except ValueError:
+                return f"Error: 'limit' must be an integer, got '{limit}'"
+        
         if limit <= 0:
             return "Error: limit must be a positive integer"
 
@@ -985,6 +1040,13 @@ def find_path(source_id: str, target_id: str, max_depth: int = 5) -> str:
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert max_depth to int if it's a string (MCP may pass strings)
+        if isinstance(max_depth, str):
+            try:
+                max_depth = int(max_depth)
+            except ValueError:
+                return f"Error: 'max_depth' must be an integer, got '{max_depth}'"
+        
         path_result = knowledge_graph.find_path(source_id, target_id, max_depth)
 
         if "error" in path_result:
@@ -1026,6 +1088,13 @@ def get_subgraph(node_id: str, depth: int = 2, edge_types: Optional[str] = None)
         return "Error: Knowledge graph not initialized"
 
     try:
+        # Convert depth to int if it's a string (MCP may pass strings)
+        if isinstance(depth, str):
+            try:
+                depth = int(depth)
+            except ValueError:
+                return f"Error: 'depth' must be an integer, got '{depth}'"
+        
         edge_types_list = edge_types.split(",") if edge_types else None
         subgraph_result = knowledge_graph.get_subgraph(node_id, depth, edge_types_list)
 
