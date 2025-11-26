@@ -8,10 +8,11 @@ through a conversational AI agent.
 import os
 import sys
 import argparse
+import re
 from typing import List, Dict, Any
 import gradio as gr
 from gradio import ChatMessage
-from smolagents import MCPClient, CodeAgent, OpenAIServerModel, AzureOpenAIModel
+from smolagents import MCPClient, ToolCallingAgent, OpenAIServerModel, AzureOpenAIModel, stream_to_gradio
 
 
 class Colors:
@@ -113,11 +114,10 @@ class KnowledgeGraphChatAgent:
         try:
             max_steps = max_steps or int(os.getenv("MAX_STEPS", 5))
             
-            self.agent = CodeAgent(
+            self.agent = ToolCallingAgent(
                 tools=self.tools,
                 model=self.model,
                 name="KnowledgeGraphAgent",
-                description="An agent that can query and analyze a source code knowledge graph using MCP server tools.",
                 max_steps=max_steps,
                 add_base_tools=True
             )
@@ -130,9 +130,28 @@ class KnowledgeGraphChatAgent:
         """Check if the agent is fully initialized and ready to chat."""
         return self.agent is not None and self.model is not None
     
+    def _parse_thinking_tags(self, text: str):
+        """
+        Extract content from <think> tags and return both thinking content and clean text.
+        
+        Args:
+            text: Text that may contain <think>...</think> tags
+            
+        Returns:
+            tuple: (thinking_content, clean_text)
+        """
+        # Find all <think>...</think> blocks
+        think_pattern = r'<think>(.*?)</think>'
+        thoughts = re.findall(think_pattern, text, re.DOTALL)
+        
+        # Remove <think> tags from the text
+        clean_text = re.sub(think_pattern, '', text, flags=re.DOTALL).strip()
+        
+        return thoughts, clean_text
+    
     def chat(self, message: str, history: List[Dict[str, Any]]):
         """
-        Process a chat message and return the response using messages format.
+        Process a chat message and stream the response using messages format.
         
         Args:
             message: The user's message
@@ -152,43 +171,48 @@ class KnowledgeGraphChatAgent:
         try:
             print_info(f"Processing query: {message}")
             
-            # Show thinking indicator
-            history.append(ChatMessage(
-                role="assistant", 
-                content="Analyzing your question and planning the approach...",
-                metadata={"title": "🧠 Thinking"}
-            ))
-            yield history
-            
-            # Run the agent and capture the result
-            result = self.agent.run(message)
-            
-            # Remove thinking indicator
-            history = history[:-1]
-            
-            # Check if there are any tool calls in the agent's execution
-            if hasattr(self.agent, 'logs') and self.agent.logs:
-                for log_entry in self.agent.logs:
-                    if 'tool' in str(log_entry).lower():
+            # Stream agent output using stream_to_gradio
+            for chat_message in stream_to_gradio(self.agent, message):
+                # Parse for <think> tags
+                content = chat_message.content if isinstance(chat_message.content, str) else str(chat_message.content)
+                thoughts, clean_content = self._parse_thinking_tags(content)
+                
+                # Display thinking content if present
+                for thought in thoughts:
+                    history.append(ChatMessage(
+                        role="assistant",
+                        content=thought.strip(),
+                        metadata={"title": "🧠 Model Thinking"}
+                    ))
+                    yield history
+                
+                # Add the message with cleaned content
+                if clean_content:
+                    if hasattr(chat_message, 'metadata') and chat_message.metadata:
+                        # Preserve original metadata from stream_to_gradio
                         history.append(ChatMessage(
-                            role="assistant",
-                            content=str(log_entry),
-                            metadata={"title": "🛠️ Using Tools"}
+                            role=chat_message.role,
+                            content=clean_content,
+                            metadata=chat_message.metadata
                         ))
-                        yield history
+                    else:
+                        # Regular message without metadata
+                        history.append(ChatMessage(
+                            role=chat_message.role,
+                            content=clean_content
+                        ))
+                    yield history
             
-            # Add final response
-            response = str(result)
             print_success("Query processed successfully!")
-            history.append(ChatMessage(role="assistant", content=response))
-            yield history
             
         except Exception as e:
             error_msg = f"Error processing query: {str(e)}"
             print_error(error_msg)
-            # Remove thinking indicator if present
-            if history and hasattr(history[-1], 'metadata') and history[-1].metadata:
-                history = history[:-1]
+            # Remove pending messages if present
+            if history and len(history) > 0:
+                last_msg = history[-1]
+                if hasattr(last_msg, 'metadata') and last_msg.metadata and last_msg.metadata.get('status') == 'pending':
+                    history = history[:-1]
             history.append(ChatMessage(role="assistant", content=error_msg))
             yield history
     
