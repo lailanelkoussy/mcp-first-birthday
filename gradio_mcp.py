@@ -250,13 +250,39 @@ def search_nodes(query: str, limit: int = 10) -> str:
                 preview = content[:150] + "..." if len(content) > 150 else content
                 result += f"   Content: {preview}\n"
 
+            # Handle declared entities - parse JSON if it's a string
             declared = res.get('declared_entities', '')
             if declared and declared != '[]':
-                result += f"   Declared: {declared}\n"
+                try:
+                    # Try to parse as JSON if it's a string
+                    import json
+                    if isinstance(declared, str):
+                        declared = json.loads(declared)
+                    # Extract entity names from the list of dicts
+                    if isinstance(declared, list) and declared:
+                        entity_names = [e.get('name', str(e)) if isinstance(e, dict) else str(e) for e in declared[:10]]
+                        result += f"   Declared: {', '.join(entity_names)}\n"
+                        if len(declared) > 10:
+                            result += f"             ... and {len(declared) - 10} more\n"
+                except (json.JSONDecodeError, AttributeError):
+                    result += f"   Declared: {declared}\n"
 
+            # Handle called entities - parse JSON if it's a string
             called = res.get('called_entities', '')
             if called and called != '[]':
-                result += f"   Called: {called}\n"
+                try:
+                    # Try to parse as JSON if it's a string
+                    import json
+                    if isinstance(called, str):
+                        called = json.loads(called)
+                    # Extract entity names from the list of dicts
+                    if isinstance(called, list) and called:
+                        entity_names = [e.get('name', str(e)) if isinstance(e, dict) else str(e) for e in called[:10]]
+                        result += f"   Called: {', '.join(entity_names)}\n"
+                        if len(called) > 10:
+                            result += f"             ... and {len(called) - 10} more\n"
+                except (json.JSONDecodeError, AttributeError):
+                    result += f"   Called: {called}\n"
             result += "\n"
 
         return result
