@@ -12,7 +12,7 @@ import re
 from typing import List, Dict, Any
 import gradio as gr
 from gradio import ChatMessage
-from smolagents import MCPClient, ToolCallingAgent, OpenAIServerModel, AzureOpenAIModel, stream_to_gradio
+from smolagents import MCPClient, ToolCallingAgent, OpenAIServerModel, AzureOpenAIModel, InferenceClientModel, stream_to_gradio
 
 
 class Colors:
@@ -66,34 +66,55 @@ class KnowledgeGraphChatAgent:
     def _initialize_model(self, model_type: str = "openai", api_key: str = None, 
                          base_url: str = None, model_name: str = None, 
                          api_version: str = None):
-        """Initialize the OpenAI or Azure OpenAI model with provided configuration."""
-        # Use provided values or fall back to environment variables
-        api_key = api_key or os.environ.get('OPENAI_API_KEY')
-        base_url = base_url or os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-        model_name = model_name or os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
-        api_version = api_version or os.environ.get('OPENAI_API_VERSION', '2024-02-15-preview')
-        is_azure = model_type == "azure" or 'azure' in base_url.lower()
+        """Initialize the OpenAI, Azure OpenAI, or HF Inference model with provided configuration."""
         
-        if not api_key:
-            raise ValueError("API key is required!")
-        
-        print_info(f"Using OpenAI configuration:")
+        print_info(f"Initializing model:")
         print(f"  Model Type: {model_type}")
         print(f"  Model: {model_name}")
-        print(f"  Base URL: {base_url}")
-        print(f"  Azure: {is_azure}")
-        if is_azure:
-            print(f"  API Version: {api_version}")
         
         try:
-            if is_azure:
+            if model_type == "azure":
+                api_key = api_key or os.environ.get('AZURE_OPENAI_API_KEY')
+                base_url = base_url or os.environ.get('AZURE_OPENAI_ENDPOINT')
+                api_version = api_version or os.environ.get('OPENAI_API_VERSION', '2024-02-15-preview')
+                
+                if not api_key:
+                    raise ValueError("Azure API key is required!")
+                if not base_url:
+                    raise ValueError("Azure endpoint is required!")
+                
+                print(f"  Endpoint: {base_url}")
+                print(f"  API Version: {api_version}")
+                
                 self.model = AzureOpenAIModel(
                     api_key=api_key,
                     api_base=base_url,
                     api_version=api_version,
                     model_id=model_name
                 )
-            else:
+            elif model_type == "hf_inference":
+                api_key = api_key or os.environ.get('HF_TOKEN')
+                model_name = model_name or os.environ.get('HF_MODEL_NAME', 'Qwen/Qwen2.5-Coder-32B-Instruct')
+                
+                if not api_key:
+                    raise ValueError("HuggingFace token is required!")
+                
+                print(f"  Model: {model_name}")
+                
+                self.model = InferenceClientModel(
+                    model_id=model_name,
+                    token=api_key
+                )
+            else:  # openai
+                api_key = api_key or os.environ.get('OPENAI_API_KEY')
+                base_url = base_url or os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+                model_name = model_name or os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
+                
+                if not api_key:
+                    raise ValueError("OpenAI API key is required!")
+                
+                print(f"  Base URL: {base_url}")
+                
                 self.model = OpenAIServerModel(
                     model_id=model_name,
                     api_key=api_key,
@@ -244,23 +265,27 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                 
                 with gr.Row():
                     model_type = gr.Dropdown(
-                        choices=["openai", "azure"],
+                        choices=["openai", "azure", "hf_inference"],
                         value="openai",
                         label="Model Type",
-                        info="Choose between OpenAI or Azure OpenAI"
+                        info="Choose between OpenAI, Azure OpenAI, or HuggingFace Inference"
                     )
+                
+                # Model name field (shown for all types)
+                with gr.Row() as model_name_row:
                     model_name = gr.Textbox(
                         label="Model Name",
                         value=os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini'),
-                        info="e.g., gpt-4o-mini, gpt-4, gpt-3.5-turbo"
+                        info="e.g., gpt-4o-mini, gpt-4, Qwen/Qwen2.5-Coder-32B-Instruct"
                     )
                 
-                with gr.Row():
+                # OpenAI specific fields
+                with gr.Row(visible=True) as openai_fields:
                     api_key = gr.Textbox(
                         label="API Key",
                         value=os.environ.get('OPENAI_API_KEY', ''),
                         type="password",
-                        info="Your OpenAI or Azure OpenAI API key"
+                        info="Your OpenAI API key"
                     )
                     base_url = gr.Textbox(
                         label="Base URL",
@@ -268,12 +293,37 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                         info="API endpoint URL"
                     )
                 
-                with gr.Row():
-                    api_version = gr.Textbox(
-                        label="API Version (Azure only)",
-                        value=os.environ.get('OPENAI_API_VERSION', '2024-02-15-preview'),
-                        info="Required for Azure OpenAI"
+                # Azure specific fields
+                with gr.Row(visible=False) as azure_fields:
+                    azure_api_key = gr.Textbox(
+                        label="Azure API Key",
+                        value=os.environ.get('AZURE_OPENAI_API_KEY', ''),
+                        type="password",
+                        info="Your Azure OpenAI API key"
                     )
+                    azure_endpoint = gr.Textbox(
+                        label="Azure Endpoint",
+                        value=os.environ.get('AZURE_OPENAI_ENDPOINT', ''),
+                        info="Azure OpenAI endpoint URL"
+                    )
+                
+                with gr.Row(visible=False) as azure_version_row:
+                    api_version = gr.Textbox(
+                        label="API Version",
+                        value=os.environ.get('OPENAI_API_VERSION', '2024-02-15-preview'),
+                        info="Azure OpenAI API version"
+                    )
+                
+                # HuggingFace Inference specific fields
+                with gr.Row(visible=False) as hf_fields:
+                    hf_token = gr.Textbox(
+                        label="HuggingFace Token",
+                        value=os.environ.get('HF_TOKEN', ''),
+                        type="password",
+                        info="Your HuggingFace API token"
+                    )
+                
+                with gr.Row():
                     max_steps = gr.Number(
                         label="Max Steps",
                         value=int(os.getenv("MAX_STEPS", 5)),
@@ -284,6 +334,36 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                 
                 init_status = gr.Markdown("**Status:** ⚠️ Please configure and initialize the agent")
                 init_btn = gr.Button("🚀 Initialize Agent", variant="primary", size="lg")
+        
+        # Toggle visibility based on model type
+        def toggle_model_fields(mtype):
+            if mtype == "azure":
+                return (
+                    gr.update(visible=False),  # openai_fields
+                    gr.update(visible=True),   # azure_fields
+                    gr.update(visible=True),   # azure_version_row
+                    gr.update(visible=False)   # hf_fields
+                )
+            elif mtype == "hf_inference":
+                return (
+                    gr.update(visible=False),  # openai_fields
+                    gr.update(visible=False),  # azure_fields
+                    gr.update(visible=False),  # azure_version_row
+                    gr.update(visible=True)    # hf_fields
+                )
+            else:  # openai
+                return (
+                    gr.update(visible=True),   # openai_fields
+                    gr.update(visible=False),  # azure_fields
+                    gr.update(visible=False),  # azure_version_row
+                    gr.update(visible=False)   # hf_fields
+                )
+        
+        model_type.change(
+            fn=toggle_model_fields,
+            inputs=[model_type],
+            outputs=[openai_fields, azure_fields, azure_version_row, hf_fields]
+        )
         
         # ==================== CHAT SECTION ====================
         with gr.Column(visible=agent.is_ready()) as chat_section:
@@ -322,15 +402,29 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
             """)
         
         # Handle agent initialization
-        def initialize_agent(mtype, mname, akey, burl, aversion, msteps):
+        def initialize_agent(mtype, mname, akey, burl, azure_akey, azure_ep, aversion, hf_tok, msteps):
             try:
-                agent._initialize_model(
-                    model_type=mtype,
-                    api_key=akey,
-                    base_url=burl,
-                    model_name=mname,
-                    api_version=aversion
-                )
+                if mtype == "azure":
+                    agent._initialize_model(
+                        model_type=mtype,
+                        api_key=azure_akey,
+                        base_url=azure_ep,
+                        model_name=mname,
+                        api_version=aversion
+                    )
+                elif mtype == "hf_inference":
+                    agent._initialize_model(
+                        model_type=mtype,
+                        api_key=hf_tok,
+                        model_name=mname
+                    )
+                else:  # openai
+                    agent._initialize_model(
+                        model_type=mtype,
+                        api_key=akey,
+                        base_url=burl,
+                        model_name=mname
+                    )
                 agent._initialize_agent(max_steps=int(msteps))
                 return (
                     gr.update(value="**Status:** ✅ Agent Ready!"),
@@ -347,7 +441,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
         
         init_btn.click(
             fn=initialize_agent,
-            inputs=[model_type, model_name, api_key, base_url, api_version, max_steps],
+            inputs=[model_type, model_name, api_key, base_url, azure_api_key, azure_endpoint, api_version, hf_token, max_steps],
             outputs=[init_status, init_section, chat_section]
         )
         
