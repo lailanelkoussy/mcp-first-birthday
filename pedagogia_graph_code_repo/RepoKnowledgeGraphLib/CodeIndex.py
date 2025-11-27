@@ -269,13 +269,25 @@ class LanceDBCodeIndex(BaseCodeIndex):
         # Create embeddings IF using vector search
         # -----------------------------------------------------------
         if self.index_type != "keyword-only":
-            nodes_needing_embeddings = [
-                node for node in chunk_nodes
-                if node.embedding is None or not use_embed
-            ]
+            # Find nodes that need embeddings
+            # use_embed=True means we should USE existing embeddings if available
+            # use_embed=False means we should regenerate all embeddings
+            nodes_needing_embeddings = []
+            for node in chunk_nodes:
+                needs_embedding = False
+                if not use_embed:
+                    # Regenerate all embeddings
+                    needs_embedding = True
+                elif node.embedding is None:
+                    needs_embedding = True
+                elif isinstance(node.embedding, (list, np.ndarray)) and len(node.embedding) == 0:
+                    needs_embedding = True
+                
+                if needs_embedding:
+                    nodes_needing_embeddings.append(node)
 
             if nodes_needing_embeddings:
-                self.logger.info(f"Embedding {len(nodes_needing_embeddings)} chunks...")
+                self.logger.info(f"Embedding {len(nodes_needing_embeddings)} chunks (out of {len(chunk_nodes)} total)...")
                 for i in tqdm(range(0, len(nodes_needing_embeddings), self.embedding_batch_size),
                              desc="Batch embedding nodes"):
                     batch = nodes_needing_embeddings[i:i + self.embedding_batch_size]
@@ -284,6 +296,8 @@ class LanceDBCodeIndex(BaseCodeIndex):
 
                     for n, emb in zip(batch, batch_embeds):
                         n.embedding = np.array(emb, dtype=np.float32)
+            else:
+                self.logger.info(f"Using existing embeddings for all {len(chunk_nodes)} chunks")
 
         # -----------------------------------------------------------
         # Prepare rows (only include vector column when allowed)
@@ -312,43 +326,108 @@ class LanceDBCodeIndex(BaseCodeIndex):
         # Create table
         self.table = self.db.create_table(self.table_name, data=rows)
         self.logger.info(f"Created LanceDB table: {self.table_name}")
+        
+        # Create full-text search index for keyword and hybrid search
+        try:
+            self.table.create_fts_index(["content", "name", "description"], replace=True)
+            self.logger.info(f"Created FTS index on table: {self.table_name}")
+        except Exception as e:
+            self.logger.warning(f"Failed to create FTS index (keyword search may be slower): {e}")
 
     def query(self, query: str, n_results: int) -> dict:
         """
         Perform search based on index_type:
         - 'embedding-only': pure vector search
-        - 'keyword-only': keyword search using SQL-like filtering
-        - 'hybrid': vector search with keyword filtering
+        - 'keyword-only': full-text search using LanceDB's native FTS
+        - 'hybrid': combines vector similarity and full-text search with reranking
         """
         try:
             # ---------------------- KEYWORD ONLY ----------------------
             if self.index_type == "keyword-only":
-                # Use SQL-like query for keyword search when no vector column
-                q = self.table.search().where(
-                    f"content LIKE '%{query}%' OR name LIKE '%{query}%' OR description LIKE '%{query}%'",
-                    prefilter=True
-                )
+                # Use LanceDB full-text search (requires FTS index on the table)
+                try:
+                    # Try full-text search first
+                    df = self.table.search(query, query_type="fts").limit(n_results).to_pandas()
+                except Exception as fts_error:
+                    self.logger.warning(f"FTS search failed, falling back to scan: {fts_error}")
+                    # Fallback: scan all rows and filter in Python
+                    all_df = self.table.to_pandas()
+                    query_lower = query.lower()
+                    # Split query into words for more flexible matching
+                    query_words = query_lower.split()
+                    
+                    def matches_query(row):
+                        text = f"{row.get('content', '')} {row.get('name', '')} {row.get('description', '')}".lower()
+                        # Match if any query word is found
+                        return any(word in text for word in query_words)
+                    
+                    mask = all_df.apply(matches_query, axis=1)
+                    df = all_df[mask].head(n_results)
+                    # Add a dummy distance column
+                    df = df.copy()
+                    df['_distance'] = 0.0
 
             # ---------------------- VECTOR ONLY -----------------------
             elif self.index_type == "embedding-only":
                 emb = np.array(self.model_service.embed_query(query), dtype=np.float32)
-                q = self.table.search(
+                df = self.table.search(
                     emb,
                     vector_column_name="vector"
-                )
+                ).limit(n_results).to_pandas()
 
             # ---------------------- HYBRID ----------------------------
             else:
+                # For hybrid search, we do vector search and optionally boost results
+                # that also match keywords. This is more flexible than requiring both.
                 emb = np.array(self.model_service.embed_query(query), dtype=np.float32)
-                q = (
-                    self.table.search(emb, vector_column_name="vector")
-                    .where(
-                        f"content LIKE '%{query}%' OR name LIKE '%{query}%' OR description LIKE '%{query}%'",
-                        prefilter=False
+                
+                # Get more results from vector search to allow for reranking
+                vector_limit = min(n_results * 3, 100)  # Get 3x results for reranking
+                df = self.table.search(
+                    emb,
+                    vector_column_name="vector"
+                ).limit(vector_limit).to_pandas()
+                
+                if not df.empty:
+                    # Rerank results based on keyword matches
+                    query_lower = query.lower()
+                    query_words = query_lower.split()
+                    
+                    def compute_keyword_score(row):
+                        """Compute a keyword match score (higher is better)"""
+                        text = f"{row.get('content', '')} {row.get('name', '')} {row.get('description', '')}".lower()
+                        score = 0
+                        # Exact phrase match gets highest score
+                        if query_lower in text:
+                            score += 10
+                        # Word matches
+                        for word in query_words:
+                            if word in text:
+                                score += 1
+                            # Bonus for word in name (more relevant)
+                            if word in str(row.get('name', '')).lower():
+                                score += 2
+                        return score
+                    
+                    # Add keyword scores
+                    df = df.copy()
+                    df['_keyword_score'] = df.apply(compute_keyword_score, axis=1)
+                    
+                    # Normalize distance to a similarity score (lower distance = higher similarity)
+                    max_dist = df['_distance'].max() if df['_distance'].max() > 0 else 1.0
+                    df['_vector_score'] = 1.0 - (df['_distance'] / max_dist)
+                    
+                    # Combined score: weighted sum of vector similarity and keyword score
+                    # Alpha controls the balance (higher alpha = more weight on vector search)
+                    alpha = 0.7  # 70% vector, 30% keyword
+                    max_keyword = df['_keyword_score'].max() if df['_keyword_score'].max() > 0 else 1.0
+                    df['_combined_score'] = (
+                        alpha * df['_vector_score'] + 
+                        (1 - alpha) * (df['_keyword_score'] / max_keyword)
                     )
-                )
-
-            df = q.limit(n_results).to_pandas()
+                    
+                    # Sort by combined score (descending) and take top n_results
+                    df = df.sort_values('_combined_score', ascending=False).head(n_results)
 
             # Build result format (ChromaDB-like format for compatibility)
             results = {

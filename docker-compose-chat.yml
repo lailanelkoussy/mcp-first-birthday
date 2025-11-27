@@ -46,8 +46,8 @@ services:
     depends_on:
       gradio-mcp:
         condition: service_healthy
-      vllm:
-        condition: service_healthy
+      # vllm:
+      #   condition: service_healthy
     volumes:
       - .:/app
     ports:
@@ -65,39 +65,39 @@ services:
 
   
 
-  vllm:
-    image: vllm/vllm-openai:v0.11.0
-    container_name: vllm
-    ports:
-      - "8000:8000"
-    environment:
-      VLLM_MODEL: HuggingFaceTB/SmolLM3-3B   # <--- change to your model
-      #VLLM_API_KEY: "none"               # not required, but prevents warnings
-    env_file:
-      - .env
-    command: >
-      --model HuggingFaceTB/SmolLM3-3B
-      --host 0.0.0.0
-      --port 8000
-    #--max-model-len 15000
-    volumes:
-      - ./models:/models
-    networks:
-      - kg-network
-    # GPU SUPPORT (uncomment if needed)
-    deploy:
-      resources:
-         reservations:
-           devices:
-             - driver: nvidia
-               count: all
-               capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models" ]
-      interval: 30s
-      timeout: 20s
-      retries: 10
-      start_period: 60s
+  # vllm:
+  #   image: vllm/vllm-openai:v0.11.0
+  #   container_name: vllm
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     VLLM_MODEL: HuggingFaceTB/SmolLM3-3B   # <--- change to your model
+  #     #VLLM_API_KEY: "none"               # not required, but prevents warnings
+  #   env_file:
+  #     - .env
+  #   command: >
+  #     --model HuggingFaceTB/SmolLM3-3B
+  #     --host 0.0.0.0
+  #     --port 8000
+  #   #--max-model-len 15000
+  #   volumes:
+  #     - ./models:/models
+  #   networks:
+  #     - kg-network
+  #   # GPU SUPPORT (uncomment if needed)
+  #   deploy:
+  #     resources:
+  #        reservations:
+  #          devices:
+  #            - driver: nvidia
+  #              count: all
+  #              capabilities: [gpu]
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models" ]
+  #     interval: 30s
+  #     timeout: 20s
+  #     retries: 10
+  #     start_period: 60s
 
 networks:
   kg-network:

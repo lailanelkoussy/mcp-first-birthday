@@ -36,7 +36,11 @@ class ChunkNode(FileNode):
     embedding : list = None
 
     def get_field_to_embed(self) -> Optional[str]:
-        return self.description
+        # Use description if available, otherwise fall back to content
+        # This ensures we always have something meaningful to embed
+        if self.description and self.description.strip():
+            return self.description
+        return self.content
 
 
 @dataclass 

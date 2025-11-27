@@ -37,6 +37,24 @@ def print_info(message):
     print(f"{Colors.YELLOW}ℹ️  {message}{Colors.ENDC}")
 
 
+CUSTOM_INSTRUCTIONS = """You are an expert assistant for understanding the Hugging Face Transformers library.
+
+Your role is to help users understand the Transformers codebase by exploring the repository using the available tools. You can:
+- Search for functions, classes, and methods in the codebase
+- Navigate the file structure and understand code organization
+- Find relationships between different components
+- Trace how code flows through the library
+- Explain implementation details and design patterns
+
+When answering questions:
+1. Use the available tools to explore the repository and gather accurate information
+2. Provide clear, well-structured explanations based on the actual code
+3. Reference specific files, functions, or classes when relevant
+4. If you're unsure about something, search the codebase to verify before answering
+
+Always base your answers on the actual code in the repository, not assumptions."""
+
+
 class KnowledgeGraphChatAgent:
     """A chat agent that connects to the Knowledge Graph MCP server."""
     
@@ -87,24 +105,32 @@ class KnowledgeGraphChatAgent:
                 print(f"  API Version: {api_version}")
                 
                 self.model = AzureOpenAIModel(
+                    model_id=model_name,
+                    azure_endpoint=base_url,
                     api_key=api_key,
-                    api_base=base_url,
-                    api_version=api_version,
-                    model_id=model_name
+                    api_version=api_version
                 )
             elif model_type == "hf_inference":
                 api_key = api_key or os.environ.get('HF_TOKEN')
                 model_name = model_name or os.environ.get('HF_MODEL_NAME', 'Qwen/Qwen2.5-Coder-32B-Instruct')
+                provider = base_url or os.environ.get('HF_INFERENCE_PROVIDER', '')
                 
                 if not api_key:
                     raise ValueError("HuggingFace token is required!")
                 
                 print(f"  Model: {model_name}")
+                if provider:
+                    print(f"  Provider: {provider}")
                 
-                self.model = InferenceClientModel(
-                    model_id=model_name,
-                    token=api_key
-                )
+                # Build kwargs for InferenceClientModel
+                model_kwargs = {
+                    "model_id": model_name,
+                    "token": api_key
+                }
+                if provider:
+                    model_kwargs["provider"] = provider
+                
+                self.model = InferenceClientModel(**model_kwargs)
             else:  # openai
                 api_key = api_key or os.environ.get('OPENAI_API_KEY')
                 base_url = base_url or os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
@@ -140,7 +166,8 @@ class KnowledgeGraphChatAgent:
                 model=self.model,
                 name="KnowledgeGraphAgent",
                 max_steps=max_steps,
-                add_base_tools=True
+                add_base_tools=False,
+                instructions=CUSTOM_INSTRUCTIONS
             )
             print_success("Agent initialized successfully!")
         except Exception as e:
@@ -322,6 +349,11 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                         type="password",
                         info="Your HuggingFace API token"
                     )
+                    hf_provider = gr.Textbox(
+                        label="Inference Provider (Optional)",
+                        value=os.environ.get('HF_INFERENCE_PROVIDER', ''),
+                        info="Provider name (e.g., 'together', 'fireworks-ai', 'cerebras'). Leave empty for auto."
+                    )
                 
                 with gr.Row():
                     max_steps = gr.Number(
@@ -402,7 +434,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
             """)
         
         # Handle agent initialization
-        def initialize_agent(mtype, mname, akey, burl, azure_akey, azure_ep, aversion, hf_tok, msteps):
+        def initialize_agent(mtype, mname, akey, burl, azure_akey, azure_ep, aversion, hf_tok, hf_prov, msteps):
             try:
                 if mtype == "azure":
                     agent._initialize_model(
@@ -416,7 +448,8 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                     agent._initialize_model(
                         model_type=mtype,
                         api_key=hf_tok,
-                        model_name=mname
+                        model_name=mname,
+                        base_url=hf_prov if hf_prov else None
                     )
                 else:  # openai
                     agent._initialize_model(
@@ -441,7 +474,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
         
         init_btn.click(
             fn=initialize_agent,
-            inputs=[model_type, model_name, api_key, base_url, azure_api_key, azure_endpoint, api_version, hf_token, max_steps],
+            inputs=[model_type, model_name, api_key, base_url, azure_api_key, azure_endpoint, api_version, hf_token, hf_provider, max_steps],
             outputs=[init_status, init_section, chat_section]
         )
         
