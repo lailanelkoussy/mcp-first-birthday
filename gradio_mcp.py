@@ -895,9 +895,11 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10) ->
     Search for nodes/entities by type and name substring.
 
     Filters nodes by type and searches for matching names.
+    For entities, searches by entity_type (e.g., 'class', 'function', 'method').
+    For other nodes, searches by node_type (e.g., 'file', 'chunk', 'directory').
 
     Args:
-        node_type: Type of node/entity (e.g., 'function', 'class', 'file')
+        node_type: Type of node/entity (e.g., 'function', 'class', 'file', 'chunk', 'directory')
         name_query: Substring to match in the name
         limit: Maximum results to return (default: 10)
 
@@ -919,15 +921,38 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10) ->
             return "Error: limit must be a positive integer"
 
         g = knowledge_graph.graph
-        matches = [
-            {
-                "id": nid,
-                "name": getattr(n['data'], 'name', 'Unknown')
-            }
-            for nid, n in g.nodes(data=True)
-            if getattr(n['data'], 'node_type', None) == node_type
-            and name_query.lower() in getattr(n['data'], 'name', '').lower()
-        ][:limit]
+        matches = []
+        
+        for nid, n in g.nodes(data=True):
+            node = n['data']
+            node_name = getattr(node, 'name', '')
+            
+            # Skip if name doesn't match the query
+            if name_query.lower() not in node_name.lower():
+                continue
+            
+            # Check type based on node_type
+            current_node_type = getattr(node, 'node_type', None)
+            
+            # For entity nodes, check entity_type instead of node_type
+            if current_node_type == 'entity':
+                entity_type = getattr(node, 'entity_type', '')
+                if entity_type.lower() == node_type.lower():
+                    matches.append({
+                        "id": nid,
+                        "name": node_name,
+                        "type": f"entity ({entity_type})"
+                    })
+            # For other nodes, check node_type directly
+            elif current_node_type == node_type:
+                matches.append({
+                    "id": nid,
+                    "name": node_name,
+                    "type": current_node_type
+                })
+            
+            if len(matches) >= limit:
+                break
 
         if not matches:
             return f"No matches for type '{node_type}' and name containing '{name_query}'."
@@ -937,7 +962,8 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10) ->
 
         for i, match in enumerate(matches, 1):
             result += f"{i}. {match['name']}\n"
-            result += f"   ID: {match['id']}\n\n"
+            result += f"   ID: {match['id']}\n"
+            result += f"   Type: {match['type']}\n\n"
 
         return result
     except Exception as e:
@@ -946,16 +972,21 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10) ->
 
 def get_chunk_context(node_id: str) -> str:
     """
-    Show the previous and next code chunk for a given chunk.
+    Get the full content of a code chunk along with its surrounding chunks.
 
-    Displays surrounding context for a specific code chunk.
+    Returns the full content of the previous, current, and next chunks,
+    organized by file and joined together.
 
     Args:
         node_id: The node/chunk ID to get context for
 
     Returns:
-        str: A formatted string with chunk context
+        str: The full content of surrounding code chunks
     """
+    from pedagogia_graph_code_repo.RepoKnowledgeGraphLib.utils.chunk_utils import (
+        organize_chunks_by_file_name, join_organized_chunks
+    )
+    
     if knowledge_graph is None:
         return "Error: Knowledge graph not initialized"
 
@@ -963,27 +994,24 @@ def get_chunk_context(node_id: str) -> str:
         if node_id not in knowledge_graph.graph:
             return f"Error: Node '{node_id}' not found in knowledge graph"
 
+        g = knowledge_graph.graph
+        current_chunk = g.nodes[node_id]['data']
         previous_chunk = knowledge_graph.get_previous_chunk(node_id)
         next_chunk = knowledge_graph.get_next_chunk(node_id)
 
-        result = f"Context for chunk '{node_id}':\n"
-        result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
+        # Collect all chunks (previous, current, next)
+        chunks = []
         if previous_chunk:
-            prev_content = previous_chunk.content
-            prev_preview = prev_content[:200] + '...' if len(prev_content) > 200 else prev_content
-            result += f"Previous chunk ({previous_chunk}):\n{prev_preview}\n\n"
-        else:
-            result += "No previous chunk found.\n\n"
-
+            chunks.append(previous_chunk)
+        chunks.append(current_chunk)
         if next_chunk:
-            next_content = next_chunk.content
-            next_preview = next_content[:200] + '...' if len(next_content) > 200 else next_content
-            result += f"Next chunk ({next_chunk}):\n{next_preview}\n\n"
-        else:
-            result += "No next chunk found.\n\n"
+            chunks.append(next_chunk)
 
-        return result
+        # Organize and join chunks
+        organized = organize_chunks_by_file_name(chunks)
+        full_content = join_organized_chunks(organized)
+
+        return full_content
     except Exception as e:
         return f"Error: {str(e)}"
 

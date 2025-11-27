@@ -836,50 +836,56 @@ class KnowledgeGraphMCPServer:
                 return self._handle_error(e, "search_by_type_and_name")
 
         @self.app.tool(
-            description="Show the previous and next code chunk for a given chunk/node ID."
+            description="Get the full content of a code chunk along with its surrounding chunks (previous and next)."
         )
         @observe(as_type='tool')
         async def get_chunk_context(
             node_id: Annotated[str, "The node/chunk ID to get context for."]
         ) -> dict:
+            from .utils.chunk_utils import organize_chunks_by_file_name, join_organized_chunks
             try:
                 self._validate_node_exists(node_id)
 
+                g = self.knowledge_graph.graph
+                current_chunk = g.nodes[node_id]['data']
                 previous_chunk = self.knowledge_graph.get_previous_chunk(node_id)
                 next_chunk = self.knowledge_graph.get_next_chunk(node_id)
 
+                # Collect all chunks (previous, current, next)
+                chunks = []
                 prev_info = None
                 next_info = None
-
-                text = f"Context for chunk '{node_id}':\n"
+                current_info = {
+                    "id": node_id,
+                    "content": getattr(current_chunk, 'content', '')
+                }
 
                 if previous_chunk:
-                    prev_content = previous_chunk.content
-                    prev_preview = prev_content[:200] + '...' if len(prev_content) > 200 else prev_content
                     prev_info = {
-                        "id": str(previous_chunk),
-                        "content_preview": prev_preview
+                        "id": previous_chunk.id,
+                        "content": previous_chunk.content
                     }
-                    text += f"Previous chunk ({previous_chunk}):\n{prev_preview}\n"
-                else:
-                    text += "No previous chunk found.\n"
+                    chunks.append(previous_chunk)
+
+                chunks.append(current_chunk)
 
                 if next_chunk:
-                    next_content = next_chunk.content
-                    next_preview = next_content[:200] + '...' if len(next_content) > 200 else next_content
                     next_info = {
-                        "id": str(next_chunk),
-                        "content_preview": next_preview
+                        "id": next_chunk.id,
+                        "content": next_chunk.content
                     }
-                    text += f"Next chunk ({next_chunk}):\n{next_preview}\n"
-                else:
-                    text += "No next chunk found.\n"
+                    chunks.append(next_chunk)
+
+                # Organize and join chunks
+                organized = organize_chunks_by_file_name(chunks)
+                full_content = join_organized_chunks(organized)
 
                 return {
                     "node_id": node_id,
+                    "current_chunk": current_info,
                     "previous_chunk": prev_info,
                     "next_chunk": next_info,
-                    "text": text
+                    "text": full_content
                 }
             except (NodeNotFoundError, InvalidInputError, EntityNotFoundError) as e:
                 return self._handle_error(e, "get_chunk_context")
