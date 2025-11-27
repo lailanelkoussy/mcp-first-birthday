@@ -8,46 +8,32 @@ services:
       - WEAVIATE_HOST=weaviate
       - WEAVIATE_PORT=8080
       - WEAVIATE_GRPC_PORT=50051
+      # Logging settings - output to docker compose logs
+      - LOG_LEVEL=INFO
+      - LOG_TO_FILE=false
+      - PYTHONUNBUFFERED=1
+      # Embedding performance settings
+      - EMBEDDING_BATCH_SIZE=64
+      - ENCODE_BATCH_SIZE=128
+      # NVIDIA GPU settings
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
      # - OPENAI_MODEL_ID
      # - OPENAI_BASE_URL
      # - OPENAI_API_KEY
-    depends_on:
-      -  weaviate
+    #depends_on:
+    #  -  weaviate
     volumes:
       - .:/app
       - ./RepoKnowledgeGraphLib:/data/repo  # <-- Replace ./RepoKnowledgeGraphLib with your actual path
     # Default command runs test_transformers.py; override with e.g. `docker compose -f docker-compose-transformers.yml run app-runner python test_vllm.py`
     command: python make_swe_knowledge_graphs.py
-    # Non-Swarm GPU enablement for docker compose
+    # GPU enablement for docker compose (requires nvidia-container-toolkit)
+    runtime: nvidia
     deploy:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
-
-  weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.28.6
-    container_name: weaviate
-    environment:
-      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
-      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
-      - QUERY_DEFAULTS_LIMIT=25
-      - DEFAULT_VECTORIZER_MODULE=none
-      - ENABLE_MODULES=
-      - CLUSTER_HOSTNAME=node1
-    ports:
-      - "8080:8080"
-      - "50051:50051"
-    volumes:
-      - weaviate-data:/var/lib/weaviate
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 15s
-
-volumes:
-  weaviate-data:
-    driver: local
-
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

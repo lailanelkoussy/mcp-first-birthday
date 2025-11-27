@@ -248,14 +248,15 @@ class RepoKnowledgeGraph:
         self.logger.info("Async parse and node aggregation fully complete.")
 
     async def _create_chunk_nodes(self, level1_node_contents, extract_entities, describe_nodes, index_nodes, root_path=None):
-        self.logger.info("Starting chunk node creation for all files.")
+        self.logger.info(f"Starting chunk node creation for {len(level1_node_contents)} files.")
         accepted_extensions = {'.py', '.c', '.cpp', '.h', '.hpp', '.java', '.js', '.ts', '.jsx', '.tsx', '.rs', '.html'}
         chunk_info = {}
         entity_mapper = EntityChunkMapper()
+        total_chunks = 0
 
         # Use tqdm for progress bar over files
         for file_path in tqdm.tqdm(level1_node_contents, desc="Processing files for chunk nodes"):
-            self.logger.info(f"Processing file for chunk nodes: {file_path}")
+            self.logger.debug(f"Processing file for chunk nodes: {file_path}")
             full_path = os.path.normpath(file_path)
             parts = full_path.split(os.sep)
             _, ext = os.path.splitext(file_path)
@@ -265,29 +266,30 @@ class RepoKnowledgeGraph:
 
             # Parse file into chunks
             parsed_content = self.code_parser.parse(file_name=file_path, file_content=level1_node_contents[file_path])
-            self.logger.info(f"Parsed {len(parsed_content)} chunks from file: {file_path}")
+            self.logger.debug(f"Parsed {len(parsed_content)} chunks from file: {file_path}")
+            total_chunks += len(parsed_content)
 
             # Entity extraction logging
             if extract_entities and is_code_file:
-                self.logger.info(f"Extracting entities from code file: {file_path}")
+                self.logger.debug(f"Extracting entities from code file: {file_path}")
                 try:
                     # Construct full path for entity extraction (needed for C/C++ include resolution)
                     extraction_file_path = os.path.join(root_path, file_path) if root_path else file_path
                     
                     file_declared_entities, file_called_entities = self.entity_extractor.extract_entities(
                         code=level1_node_contents[file_path], file_name=extraction_file_path)
-                    self.logger.info(f"Extracted {len(file_declared_entities)} declared and {len(file_called_entities)} called entities from file: {file_path}")
+                    self.logger.debug(f"Extracted {len(file_declared_entities)} declared and {len(file_called_entities)} called entities from file: {file_path}")
 
                     chunk_declared_map, chunk_called_map = entity_mapper.map_entities_to_chunks(
                         file_declared_entities, file_called_entities, parsed_content, file_name=file_path)
-                    self.logger.info(f"Mapped entities to {len(parsed_content)} chunks for file: {file_path}")
+                    self.logger.debug(f"Mapped entities to {len(parsed_content)} chunks for file: {file_path}")
                 except Exception as e:
                     self.logger.error(f"Error extracting entities from {file_path}: {e}")
                     file_declared_entities, file_called_entities = [], []
                     chunk_declared_map = {i: [] for i in range(len(parsed_content))}
                     chunk_called_map = {i: [] for i in range(len(parsed_content))}
             else:
-                self.logger.info(f"Skipping entity extraction for non-code file: {file_path}")
+                self.logger.debug(f"Skipping entity extraction for non-code file: {file_path}")
                 file_declared_entities, file_called_entities = [], []
                 chunk_declared_map = {i: [] for i in range(len(parsed_content))}
                 chunk_called_map = {i: [] for i in range(len(parsed_content))}
@@ -298,7 +300,7 @@ class RepoKnowledgeGraph:
                 self.logger.debug(f"Scheduling processing for chunk {chunk_id} of file {file_path}")
 
                 async def process_chunk(i=i, chunk=chunk, chunk_id=chunk_id):
-                    self.logger.info(f"Creating chunk node: {chunk_id}")
+                    self.logger.debug(f"Creating chunk node: {chunk_id}")
                     declared_entities = chunk_declared_map.get(i, [])
                     called_entities = chunk_called_map.get(i, [])
 
@@ -332,7 +334,7 @@ class RepoKnowledgeGraph:
                             entity_key = canonical_name
                         else:
                             entity_key = name
-                            self.logger.info(f"Registering new declared entity '{name}' in chunk {chunk_id}")
+                            self.logger.debug(f"Registering new declared entity '{name}' in chunk {chunk_id}")
                             self.entities[entity_key] = {
                                 "declaring_chunk_ids": [],
                                 "calling_chunk_ids": [],
@@ -383,32 +385,25 @@ class RepoKnowledgeGraph:
                         language=get_language_from_filename(file_path),
                         description=description,
                     )
-                    self.logger.info(f"Chunk node created: {chunk_id}")
+                    self.logger.debug(f"Chunk node created: {chunk_id}")
 
-                    if index_nodes:
-                        self.logger.info(f"Generating embedding for chunk {chunk_id}")
-                        try:
-                            embedding = await self.model_service.embed_async(text_to_embed=chunk_node.get_field_to_embed())
-                        except Exception as e:
-                            self.logger.error(f"Error generating embedding for chunk {chunk_id}: {e}")
-                            embedding = []
-                    else:
-                        self.logger.debug(f"No embedding requested for chunk {chunk_id}")
-                        embedding = []
-
-                    chunk_node.embedding = embedding
+                    # NOTE: Embeddings are now deferred to CodeIndex for efficient batch processing
+                    # This avoids the slow one-at-a-time embedding during chunk creation
+                    chunk_node.embedding = None
                     return (chunk_id, chunk_node, declared_entities, called_entities)
 
                 chunk_tasks.append(process_chunk())
 
             chunk_results = await asyncio.gather(*chunk_tasks)
-            self.logger.info(f"Finished processing {len(chunk_results)} chunks for file {file_path}.")
+            self.logger.debug(f"Finished processing {len(chunk_results)} chunks for file {file_path}.")
             chunk_info[file_path] = {
                 'chunk_results': chunk_results,
                 'file_declared_entities': file_declared_entities,
                 'file_called_entities': file_called_entities
             }
-            self.logger.debug(f"Processed {len(chunk_results)} chunks for file {file_path}.")
+
+        # Log summary
+        self.logger.info(f"Created {total_chunks} chunk nodes from {len(level1_node_contents)} files")
 
         # SECOND PASS: Now that all declared entities are registered, resolve called entities
         self.logger.info("Starting second pass: resolving called entities using alias map...")

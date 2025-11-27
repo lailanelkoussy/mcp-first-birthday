@@ -255,6 +255,7 @@ class OpenAIModelService(ModelServiceInterface):
 class SentenceTransformersModelService(ModelServiceInterface):
     """
     Model service that uses OpenAI client for queries and SentenceTransformers for embeddings.
+    Optimized for high-throughput batch embedding with GPU support.
     """
 
     def __init__(self, model_name: str = None, embed_model_name: str = None, model_kwargs: dict = None):
@@ -263,21 +264,61 @@ class SentenceTransformersModelService(ModelServiceInterface):
         # embed_model_name may be overridden by model_kwargs
         self.embed_model_name = embed_model_name or model_kwargs.get("EMBED_MODEL_NAME", self.embed_model_name)
 
+        # Debug GPU detection
+        self.logger.info(f'PyTorch available: {_TORCH_AVAILABLE}')
+        if _TORCH_AVAILABLE:
+            self.logger.info(f'CUDA available: {torch.cuda.is_available()}')
+            self.logger.info(f'CUDA device count: {torch.cuda.device_count()}')
+            if torch.cuda.is_available():
+                self.logger.info(f'CUDA device name: {torch.cuda.get_device_name(0)}')
+
         # Select device: prefer CUDA if available
         self.device = "cuda" if (_TORCH_AVAILABLE and torch.cuda.is_available()) else "cpu"
         self.logger.info(f'Initializing SentenceTransformer on device: {self.device}')
 
-        # Initialize embedding model on the chosen device
+        # Set batch size based on device and available memory
+        # Larger batch sizes significantly improve GPU throughput
+        self.encode_batch_size = int(model_kwargs.get("ENCODE_BATCH_SIZE", 64 if self.device == "cuda" else 32))
+        
+        # Show CUDA memory info if available
+        if self.device == "cuda" and _TORCH_AVAILABLE:
+            try:
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                self.logger.info(f'GPU memory available: {gpu_memory:.2f} GB')
+                # Adjust batch size based on available GPU memory
+                if gpu_memory > 16:
+                    self.encode_batch_size = max(self.encode_batch_size, 128)
+                elif gpu_memory > 8:
+                    self.encode_batch_size = max(self.encode_batch_size, 64)
+            except Exception as e:
+                self.logger.warning(f'Could not get GPU memory info: {e}')
+
+        self.logger.info(f'Using encode batch size: {self.encode_batch_size}')
+
+        # Initialize embedding model on the chosen device with performance optimizations
         self.embedding_model = SentenceTransformer(
             self.embed_model_name,
             trust_remote_code=True,
             device=self.device
         )
+        
+        # Enable half precision for faster inference on CUDA
+        if self.device == "cuda" and _TORCH_AVAILABLE:
+            try:
+                # Check if model supports half precision
+                self.embedding_model.half()
+                self.logger.info('Enabled half precision (FP16) for faster GPU inference')
+            except Exception as e:
+                self.logger.warning(f'Could not enable half precision: {e}')
 
     def embed(self, text_to_embed: str) -> list:
         """Embed text using SentenceTransformers."""
-        embeddings = self.embedding_model.encode([text_to_embed])
-        return embeddings[0].tolist() if hasattr(embeddings[0], 'tolist') else embeddings[0]
+        embeddings = self.embedding_model.encode(
+            [text_to_embed],
+            convert_to_numpy=True,
+            show_progress_bar=False
+        )
+        return embeddings[0].tolist() if hasattr(embeddings[0], 'tolist') else list(embeddings[0])
 
     async def embed_async(self, text_to_embed: str) -> list:
         """
@@ -289,34 +330,52 @@ class SentenceTransformersModelService(ModelServiceInterface):
 
     def embed_chunk_code(self, code_to_embed: str) -> list:
         """Embed code chunk using SentenceTransformers (no special prompt)."""
-        self.logger.info(f'Embedding code using {self.embed_model_name}')
-        embeddings = self.embedding_model.encode([code_to_embed])
-        return embeddings[0].tolist() if hasattr(embeddings[0], 'tolist') else embeddings[0]
+        self.logger.debug(f'Embedding code using {self.embed_model_name}')
+        embeddings = self.embedding_model.encode(
+            [code_to_embed],
+            convert_to_numpy=True,
+            show_progress_bar=False
+        )
+        return embeddings[0].tolist() if hasattr(embeddings[0], 'tolist') else list(embeddings[0])
 
     def embed_query(self, query_to_embed: str) -> list:
         """Embed query using SentenceTransformers with retrieval prompt."""
-        self.logger.info(f'Embedding query using {self.embed_model_name}')
+        self.logger.debug(f'Embedding query using {self.embed_model_name}')
         embeddings = self.embedding_model.encode(
             [query_to_embed],
-            prompt='Given this prompt, retrieve relevant content\n Query:'
+            prompt='Given this prompt, retrieve relevant content\n Query:',
+            convert_to_numpy=True,
+            show_progress_bar=False
         )
-        return embeddings[0].tolist() if hasattr(embeddings[0], 'tolist') else embeddings[0]
+        return embeddings[0].tolist() if hasattr(embeddings[0], 'tolist') else list(embeddings[0])
 
     def embed_batch(self, texts_to_embed: list[str]) -> list[list]:
-        """Embed multiple texts in a batch using SentenceTransformers."""
+        """Embed multiple texts in a batch using SentenceTransformers with optimized settings."""
         if not texts_to_embed:
             return []
         self.logger.info(f'Batch embedding {len(texts_to_embed)} texts using {self.embed_model_name}')
-        embeddings = self.embedding_model.encode(texts_to_embed)
-        return [emb.tolist() if hasattr(emb, 'tolist') else emb for emb in embeddings]
+        embeddings = self.embedding_model.encode(
+            texts_to_embed,
+            batch_size=self.encode_batch_size,
+            convert_to_numpy=True,
+            show_progress_bar=len(texts_to_embed) > 100,  # Only show progress for large batches
+            normalize_embeddings=True  # Normalize for better similarity computation
+        )
+        return [emb.tolist() if hasattr(emb, 'tolist') else list(emb) for emb in embeddings]
 
     def embed_chunk_code_batch(self, codes_to_embed: list[str]) -> list[list]:
-        """Embed multiple code chunks in a batch using SentenceTransformers."""
+        """Embed multiple code chunks in a batch using SentenceTransformers with optimized settings."""
         if not codes_to_embed:
             return []
         self.logger.info(f'Batch embedding {len(codes_to_embed)} code chunks using {self.embed_model_name}')
-        embeddings = self.embedding_model.encode(codes_to_embed)
-        return [emb.tolist() if hasattr(emb, 'tolist') else emb for emb in embeddings]
+        embeddings = self.embedding_model.encode(
+            codes_to_embed,
+            batch_size=self.encode_batch_size,
+            convert_to_numpy=True,
+            show_progress_bar=len(codes_to_embed) > 100,  # Only show progress for large batches
+            normalize_embeddings=True  # Normalize for better similarity computation
+        )
+        return [emb.tolist() if hasattr(emb, 'tolist') else list(emb) for emb in embeddings]
 
 
 def create_model_service(**kwargs) -> ModelServiceInterface:

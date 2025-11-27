@@ -45,9 +45,9 @@ class CodeParser:
         file_extension = file_name.split('.')[-1]
 
         try:
-            self.logger.info(f'Parsing file: {file_name}')
+            self.logger.debug(f'Parsing file: {file_name}')
             if file_extension not in self.extension_mapping:
-                self.logger.info(f'File extension not supported: {file_extension}')
+                self.logger.debug(f'File extension not supported: {file_extension}')
                 text_splitter = RecursiveCharacterTextSplitter(
                     chunk_size=CODE_CHUNK_SIZE,
                     chunk_overlap=CODE_CHUNK_OVERLAP,
@@ -57,7 +57,7 @@ class CodeParser:
                 docs = text_splitter.create_documents([file_content])
 
             else:
-                self.logger.info(f'File extension supported: {file_extension}')
+                self.logger.debug(f'File extension supported: {file_extension}')
                 code_splitter = RecursiveCharacterTextSplitter.from_language(language=self.extension_mapping[file_extension], chunk_size=CODE_CHUNK_SIZE, chunk_overlap=CODE_CHUNK_OVERLAP)
                 docs = code_splitter.create_documents([file_content])
         except Exception as e:

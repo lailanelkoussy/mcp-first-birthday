@@ -2062,7 +2062,7 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=7860, help="Port to bind to")
     parser.add_argument("--share", action="store_true", help="Create a public link")
-    parser.add_argument("--code-index-type", type=str, default="hybrid", help="Type of code index to use", choices=["keyword-only", "embedding-only", "hybrid"])
+    parser.add_argument("--code-index-type", type=str, default="keyword-only", help="Type of code index to use", choices=["keyword-only", "embedding-only", "hybrid"])
     parser.add_argument("--code-index-backend", type=str, default="lancedb", help="Backend for code index", choices=["lancedb", "weaviate"])
     parser.add_argument("--code-index-embedding-batch-size", type=int, default=20, help="Batch size for embeddings")
     parser.add_argument("--code-index-use-embed", action="store_true", default=True, help="Use embeddings")

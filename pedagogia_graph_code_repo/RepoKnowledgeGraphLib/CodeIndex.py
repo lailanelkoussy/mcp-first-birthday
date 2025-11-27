@@ -42,13 +42,15 @@ class BaseCodeIndex(ABC):
     """Abstract base class for code indexing implementations"""
 
     def __init__(self, nodes: list, model_service, index_type: Literal['embedding-only', 'keyword-only', 'hybrid'] = 'hybrid',
-                 embedding_batch_size: int = 20, use_embed: bool = True):
+                 embedding_batch_size: int = 64, use_embed: bool = True):
         setup_logger(LOGGER_NAME)
         self.logger = logging.getLogger(LOGGER_NAME)
         self.model_service = model_service
         self.index_type = index_type
-        self.embedding_batch_size = embedding_batch_size
+        # Use larger batch size by default for better throughput
+        self.embedding_batch_size = int(os.getenv('EMBEDDING_BATCH_SIZE', embedding_batch_size))
         self.use_embed = use_embed
+        self.logger.info(f"CodeIndex initialized with batch_size={self.embedding_batch_size}, index_type={index_type}")
 
     @abstractmethod
     def query(self, query: str, n_results: int) -> dict:
@@ -105,18 +107,19 @@ class WeaviateCodeIndex(BaseCodeIndex):
         )
 
         chunk_nodes = [node for node in nodes if node.node_type == 'chunk']
-        
+        self.logger.info(f"Weaviate indexing {len(chunk_nodes)} chunk nodes with batch_size={self.embedding_batch_size}")
 
         # Pre-generate embeddings in batches for better performance
         if self.index_type != 'keyword-only':
             # Identify nodes that need embeddings
             nodes_needing_embeddings = [
                 node for node in chunk_nodes 
-                if node.embedding is None or not use_embed
+                if node.embedding is None or (isinstance(node.embedding, (list,)) and len(node.embedding) == 0) or not use_embed
             ]
             
             if nodes_needing_embeddings:
-                self.logger.info(f'Batch embedding {len(nodes_needing_embeddings)} nodes')
+                total_batches = (len(nodes_needing_embeddings) + self.embedding_batch_size - 1) // self.embedding_batch_size
+                self.logger.info(f'Batch embedding {len(nodes_needing_embeddings)} nodes in {total_batches} batches')
                 
                 # Process in batches
                 for i in tqdm(range(0, len(nodes_needing_embeddings), self.embedding_batch_size), 
@@ -130,6 +133,15 @@ class WeaviateCodeIndex(BaseCodeIndex):
                     # Assign embeddings back to nodes
                     for node, embedding in zip(batch_nodes, embeddings):
                         node.embedding = embedding
+                    
+                    # Log progress every 10 batches
+                    batch_num = i // self.embedding_batch_size + 1
+                    if batch_num % 10 == 0:
+                        self.logger.info(f"Completed batch {batch_num}/{total_batches}")
+                
+                self.logger.info(f"Embedding complete: processed {len(nodes_needing_embeddings)} nodes")
+            else:
+                self.logger.info(f"Using existing embeddings for all {len(chunk_nodes)} nodes")
 
         # Batch insert data into Weaviate
         with self.collection.batch.dynamic() as batch:
@@ -264,6 +276,7 @@ class LanceDBCodeIndex(BaseCodeIndex):
         self.table = None
 
         chunk_nodes = [node for node in nodes if node.node_type == "chunk"]
+        self.logger.info(f"LanceDB indexing {len(chunk_nodes)} chunk nodes with batch_size={self.embedding_batch_size}")
 
         # -----------------------------------------------------------
         # Create embeddings IF using vector search
@@ -287,7 +300,9 @@ class LanceDBCodeIndex(BaseCodeIndex):
                     nodes_needing_embeddings.append(node)
 
             if nodes_needing_embeddings:
-                self.logger.info(f"Embedding {len(nodes_needing_embeddings)} chunks (out of {len(chunk_nodes)} total)...")
+                total_batches = (len(nodes_needing_embeddings) + self.embedding_batch_size - 1) // self.embedding_batch_size
+                self.logger.info(f"Embedding {len(nodes_needing_embeddings)} chunks in {total_batches} batches (batch_size={self.embedding_batch_size})...")
+                
                 for i in tqdm(range(0, len(nodes_needing_embeddings), self.embedding_batch_size),
                              desc="Batch embedding nodes"):
                     batch = nodes_needing_embeddings[i:i + self.embedding_batch_size]
@@ -296,6 +311,13 @@ class LanceDBCodeIndex(BaseCodeIndex):
 
                     for n, emb in zip(batch, batch_embeds):
                         n.embedding = np.array(emb, dtype=np.float32)
+                    
+                    # Log progress every 10 batches
+                    batch_num = i // self.embedding_batch_size + 1
+                    if batch_num % 10 == 0:
+                        self.logger.info(f"Completed batch {batch_num}/{total_batches}")
+                
+                self.logger.info(f"Embedding complete: processed {len(nodes_needing_embeddings)} chunks")
             else:
                 self.logger.info(f"Using existing embeddings for all {len(chunk_nodes)} chunks")
 

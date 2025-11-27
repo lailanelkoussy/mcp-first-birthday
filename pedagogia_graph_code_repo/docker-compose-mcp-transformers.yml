@@ -12,6 +12,13 @@ services:
       - PORT=4000
       - REPO_PATH=/data/repo
       - REPO_URL=https://github.com/lailanelkoussy/transformers-streaming-api
+      # Logging settings - output to docker compose logs
+      - LOG_LEVEL=INFO
+      - LOG_TO_FILE=false
+      - PYTHONUNBUFFERED=1
+      # Embedding performance settings
+      - EMBEDDING_BATCH_SIZE=64
+      - ENCODE_BATCH_SIZE=128
     env_file:
       - .env
     depends_on:
@@ -45,6 +52,10 @@ services:
       - WEAVIATE_GRPC_PORT=50051
       - MCP_SERVER_CONTAINER=mcp-server
       - MCP_SERVER_URL=http://mcp-server:4000
+      # Logging settings
+      - LOG_LEVEL=INFO
+      - LOG_TO_FILE=false
+      - PYTHONUNBUFFERED=1
     depends_on:
       mcp-server:
         condition: service_healthy
