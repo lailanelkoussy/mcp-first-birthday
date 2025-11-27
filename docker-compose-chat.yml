@@ -18,9 +18,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7860/"]
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 5
-      start_period: 30s
+      start_period: 120s
     stdin_open: true
     tty: true
     restart: unless-stopped

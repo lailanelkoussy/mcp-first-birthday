@@ -1005,7 +1005,11 @@ class RepoKnowledgeGraph:
 
         if index_nodes:
             instance.logger.info("Building code index after deserialization.")
-            instance.code_index = CodeIndex(list(instance), use_embed=use_embed, model_service=instance.model_service, **(code_index_kwargs or {}))
+            # Merge use_embed with code_index_kwargs, avoiding duplicate keyword arguments
+            code_idx_kwargs = code_index_kwargs or {}
+            if 'use_embed' not in code_idx_kwargs:
+                code_idx_kwargs['use_embed'] = use_embed
+            instance.code_index = CodeIndex(list(instance), model_service=instance.model_service, **code_idx_kwargs)
 
         instance.logger.info("Deserialization complete.")
         return instance
