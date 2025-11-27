@@ -649,7 +649,9 @@ class RepoKnowledgeGraph:
 
         # First pass: Create all entity nodes
         for entity_name, info in self.entities.items():
-            entity_type = info.get('entity_type', '')
+            # Entity type is stored as a list in 'type' key, get first type or empty string
+            entity_types = info.get('type', [])
+            entity_type = entity_types[0] if entity_types else ''
             declaring_chunks = info.get('declaring_chunk_ids', [])
             calling_chunks = info.get('calling_chunk_ids', [])
             aliases = info.get('aliases', [])

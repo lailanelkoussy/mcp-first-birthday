@@ -999,7 +999,14 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fu
             # For entity nodes, check entity_type instead of node_type
             if current_node_type == 'entity':
                 entity_type = getattr(node, 'entity_type', '')
-                if entity_type.lower() == node_type.lower():
+                
+                # Fallback: if entity_type is empty, check the entities dictionary
+                # This handles cases where EntityNode was created before the fix
+                if not entity_type and nid in knowledge_graph.entities:
+                    entity_types = knowledge_graph.entities[nid].get('type', [])
+                    entity_type = entity_types[0] if entity_types else ''
+                
+                if entity_type and entity_type.lower() == node_type.lower():
                     # Calculate match score for sorting (exact matches first)
                     score = 0 if query_lower == node_name.lower() else (1 if query_lower in node_name.lower() else 2)
                     matches.append({

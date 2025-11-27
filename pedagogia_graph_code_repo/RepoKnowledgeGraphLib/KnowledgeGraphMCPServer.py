@@ -789,27 +789,82 @@ class KnowledgeGraphMCPServer:
                 return self._handle_error(e, "entity_relationships")
 
         @self.app.tool(
-            description="Search for nodes/entities by type and name substring."
+            description="Search for nodes/entities by type and name substring with fuzzy matching support. For entities, searches by entity_type (e.g., 'class', 'function', 'method'). For other nodes, searches by node_type (e.g., 'file', 'chunk', 'directory')."
         )
         @observe(as_type='tool')
         async def search_by_type_and_name(
-            node_type: Annotated[str, "Type of node/entity (e.g., 'function', 'class', 'file')."],
-            name_query: Annotated[str, "Substring to match in the name."],
-            limit: Annotated[int, "Maximum results to return."] = 10
+            node_type: Annotated[str, "Type of node/entity (e.g., 'function', 'class', 'file', 'chunk', 'directory')."],
+            name_query: Annotated[str, "Substring to match in the name (case-insensitive, supports partial matches)."],
+            limit: Annotated[int, "Maximum results to return."] = 10,
+            fuzzy: Annotated[bool, "Enable fuzzy/partial matching (default: True)."] = True
         ) -> dict:
+            import re
             try:
                 self._validate_positive_int(limit, "limit")
 
                 g = self.knowledge_graph.graph
-                matches = [
-                    {
-                        "id": nid,
-                        "name": getattr(n['data'], 'name', 'Unknown'),
-                        "content": getattr(n['data'], 'content', None)
-                    }
-                    for nid, n in g.nodes(data=True)
-                    if getattr(n['data'], 'node_type', None) == node_type and name_query.lower() in getattr(n['data'], 'name', '').lower()
-                ][:limit]
+                matches = []
+                query_lower = name_query.lower()
+                
+                # Build regex pattern for fuzzy matching
+                if fuzzy:
+                    fuzzy_pattern = '.*'.join(re.escape(c) for c in query_lower)
+                    fuzzy_regex = re.compile(fuzzy_pattern, re.IGNORECASE)
+                
+                for nid, n in g.nodes(data=True):
+                    node = n['data']
+                    node_name = getattr(node, 'name', '')
+                    
+                    if not node_name:
+                        continue
+                    
+                    # Check if name matches the query
+                    name_matches = False
+                    if fuzzy:
+                        if query_lower in node_name.lower() or fuzzy_regex.search(node_name):
+                            name_matches = True
+                    else:
+                        if query_lower in node_name.lower():
+                            name_matches = True
+                    
+                    if not name_matches:
+                        continue
+                    
+                    # Check type based on node_type
+                    current_node_type = getattr(node, 'node_type', None)
+                    
+                    # For entity nodes, check entity_type instead of node_type
+                    if current_node_type == 'entity':
+                        entity_type = getattr(node, 'entity_type', '')
+                        
+                        # Fallback: if entity_type is empty, check the entities dictionary
+                        if not entity_type and nid in self.knowledge_graph.entities:
+                            entity_types = self.knowledge_graph.entities[nid].get('type', [])
+                            entity_type = entity_types[0] if entity_types else ''
+                        
+                        if entity_type and entity_type.lower() == node_type.lower():
+                            score = 0 if query_lower == node_name.lower() else (1 if query_lower in node_name.lower() else 2)
+                            matches.append({
+                                "id": nid,
+                                "name": node_name,
+                                "type": f"entity ({entity_type})",
+                                "content": getattr(node, 'content', None),
+                                "score": score
+                            })
+                    # For other nodes, check node_type directly
+                    elif current_node_type == node_type:
+                        score = 0 if query_lower == node_name.lower() else (1 if query_lower in node_name.lower() else 2)
+                        matches.append({
+                            "id": nid,
+                            "name": node_name,
+                            "type": current_node_type,
+                            "content": getattr(node, 'content', None),
+                            "score": score
+                        })
+                
+                # Sort by match score (best matches first) and limit results
+                matches.sort(key=lambda x: (x['score'], x['name'].lower()))
+                matches = matches[:limit]
 
                 if not matches:
                     return {
@@ -819,9 +874,9 @@ class KnowledgeGraphMCPServer:
                         "text": f"No matches for type '{node_type}' and name containing '{name_query}'."
                     }
 
-                text = f"Matches for type '{node_type}' and name '{name_query}':\n"
+                text = f"Matches for type '{node_type}' and name '{name_query}' ({len(matches)} results):\n"
                 for match in matches:
-                    text += f"- {match['id']}: {match['name']}\n"
+                    text += f"- {match['id']}: {match['name']} [{match['type']}]\n"
 
                 return {
                     "node_type": node_type,
