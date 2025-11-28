@@ -10,6 +10,8 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       # Specify your repository - change this to your repo
       - REPO_URL=${REPO_URL:-https://github.com/huggingface/transformers}
+    env_file:
+      - .env
     volumes:
       - ./gradio_mcp.py:/app/gradio_mcp.py:ro
       - ./pedagogia_graph_code_repo:/app/pedagogia_graph_code_repo:ro
@@ -33,6 +35,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: smolagent-chat
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
