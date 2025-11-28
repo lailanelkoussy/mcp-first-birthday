@@ -276,15 +276,17 @@ class KnowledgeGraphChatAgent:
 def create_gradio_interface(agent: KnowledgeGraphChatAgent):
     """Create the Gradio chat interface with model configuration."""
     
-    with gr.Blocks(title="Knowledge Graph Chat Agent", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="🤗 Transformers Q&A Agent", theme=gr.themes.Soft()) as demo:
         
         # ==================== INITIALIZATION SECTION ====================
         with gr.Column(visible=not agent.is_ready()) as init_section:
             gr.Markdown("""
-            # 🤖 Knowledge Graph Chat Agent
+            # 🤗 Transformers Library Q&A Agent
             
-            Configure your AI model to start chatting with the knowledge graph.
-            The MCP server tools are already connected!
+            Welcome! This AI agent helps you understand the **Hugging Face Transformers** library.
+            Ask questions about the codebase, find functions, explore classes, and understand how components work together.
+            
+            Configure your AI model below to get started. The MCP server tools are already connected!
             """)
             
             with gr.Group():
@@ -400,26 +402,28 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
         # ==================== CHAT SECTION ====================
         with gr.Column(visible=agent.is_ready()) as chat_section:
             gr.Markdown("""
-            # 🤖 Knowledge Graph Chat Agent
+            # 🤗 Transformers Library Q&A Agent
             
-            Chat with an AI agent that can explore and analyze your codebase knowledge graph.
-            Ask questions about your code structure, functions, classes, dependencies, and more!
+            Ask me anything about the **Hugging Face Transformers** library! I can help you:
+            - 🔍 Find and explain functions, classes, and methods
+            - 🗺️ Navigate the codebase structure and understand file organization
+            - 🔗 Trace relationships and dependencies between components
+            - 📖 Explain implementation details and design patterns
             """)
             
             chatbot = gr.Chatbot(
-                label="Chat History",
+                label="Transformers Q&A",
                 height=500,
                 show_copy_button=True,
-                type="messages",
-                avatar_images=(None, "🤖")
+                type="messages"
             )
             
             with gr.Row():
                 msg = gr.Textbox(
-                    label="Your Message",
-                    placeholder="Ask me anything about your codebase...",
+                    label="Your Question",
+                    placeholder="Ask about the Transformers library... (e.g., 'How does BertModel work?')",
                     scale=4,
-                    lines=2
+                    lines=1
                 )
                 submit_btn = gr.Button("Send", variant="primary", scale=1)
             
@@ -427,10 +431,12 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                 clear_btn = gr.Button("Clear Chat", variant="secondary")
             
             gr.Markdown("""
-            ### Tips:
-            - Be specific in your questions for better results
-            - You can ask follow-up questions based on previous responses
-            - The agent has access to all MCP server tools for code analysis
+            ### 💡 Example Questions:
+            - "How does the `AutoModel` class work?"
+            - "What is the structure of a model's `forward` method?"
+            - "Find all classes that inherit from `PreTrainedModel`"
+            - "How does tokenization work in the library?"
+            - "What files are involved in the BERT implementation?"
             """)
         
         # Handle agent initialization
