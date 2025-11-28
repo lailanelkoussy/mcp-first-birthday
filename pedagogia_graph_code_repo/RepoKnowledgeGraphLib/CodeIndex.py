@@ -351,7 +351,8 @@ class LanceDBCodeIndex(BaseCodeIndex):
         
         # Create full-text search index for keyword and hybrid search
         try:
-            self.table.create_fts_index(["content", "name", "description"], replace=True)
+            # use_tantivy=True is required to support multiple field names as a list
+            self.table.create_fts_index(["content", "name", "description"], replace=True, use_tantivy=True)
             self.logger.info(f"Created FTS index on table: {self.table_name}")
         except Exception as e:
             self.logger.warning(f"Failed to create FTS index (keyword search may be slower): {e}")

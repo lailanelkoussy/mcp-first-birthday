@@ -125,7 +125,8 @@ class KnowledgeGraphChatAgent:
                 # Build kwargs for InferenceClientModel
                 model_kwargs = {
                     "model_id": model_name,
-                    "token": api_key
+                    "token": api_key,
+                    "bill_to": "epita"
                 }
                 if provider:
                     model_kwargs["provider"] = provider

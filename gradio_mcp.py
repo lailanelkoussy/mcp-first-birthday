@@ -6,6 +6,16 @@ import fnmatch
 import re
 from typing import Optional, List
 import gradio as gr
+from langfuse import get_client, observe
+
+# Initialize Langfuse client for tracing
+langfuse = get_client()
+
+# Verify Langfuse connection
+if langfuse.auth_check():
+    print("✓ Langfuse client is authenticated and ready!")
+else:
+    print("⚠️ Langfuse authentication failed. Tracing may not work correctly.")
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'pedagogia_graph_code_repo'))
@@ -71,6 +81,7 @@ def initialize_knowledge_graph(
         raise ValueError("Must provide either repo_path, graph_file, or repo_url")
 
 
+@observe(as_type="tool")
 def get_node_info(node_id: str) -> str:
     """
     Get detailed information about a node in the knowledge graph.
@@ -139,8 +150,7 @@ def get_node_info(node_id: str) -> str:
             # Add content preview for file/chunk nodes
             if node_type in ['file', 'chunk']:
                 content = getattr(node, 'content', None)
-                content_preview = content[:200] + "..." if content and len(content) > 200 else content
-                result += f"\nContent Preview:\n{content_preview or 'N/A'}\n"
+                result += f"\nContent:\n{content or 'N/A'}\n"
                 if hasattr(node, 'path'):
                     result += f"Path: {node.path}\n"
                 if hasattr(node, 'language'):
@@ -158,6 +168,7 @@ def get_node_info(node_id: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_node_edges(node_id: str) -> str:
     """
     List all incoming and outgoing edges for a node.
@@ -209,6 +220,7 @@ Incoming Edges ({len(incoming)}):
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def search_nodes(query: str, limit: int = 10) -> str:
     """
     Search for nodes in the knowledge graph by query string.
@@ -249,8 +261,7 @@ def search_nodes(query: str, limit: int = 10) -> str:
             result += f"{i}. ID: {res.get('id', 'N/A')}\n"
             content = res.get('content', '')
             if content:
-                preview = content[:150] + "..." if len(content) > 150 else content
-                result += f"   Content: {preview}\n"
+                result += f"   Content: {content}\n"
 
             # Handle declared entities - parse JSON if it's a string
             declared = res.get('declared_entities', '')
@@ -292,6 +303,7 @@ def search_nodes(query: str, limit: int = 10) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_graph_stats() -> str:
     """
     Get overall statistics about the knowledge graph.
@@ -339,6 +351,7 @@ Node Types:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def list_nodes_by_type(node_type: str, limit: int = 20) -> str:
     """
     List nodes of a specific type in the knowledge graph.
@@ -386,6 +399,7 @@ def list_nodes_by_type(node_type: str, limit: int = 20) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_neighbors(node_id: str) -> str:
     """
     Get all nodes directly connected to a given node.
@@ -433,6 +447,7 @@ def get_neighbors(node_id: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def go_to_definition(entity_name: str) -> str:
     """
     Find where an entity is declared or defined in the codebase.
@@ -468,11 +483,10 @@ def go_to_definition(entity_name: str) -> str:
         for i, chunk_id in enumerate(declaring_chunks[:5], 1):
             if chunk_id in knowledge_graph.graph:
                 chunk = knowledge_graph.graph.nodes[chunk_id]['data']
-                content_preview = chunk.content[:150] + "..." if len(chunk.content) > 150 else chunk.content
                 result += f"{i}. Chunk: {chunk_id}\n"
                 result += f"   File: {chunk.path}\n"
                 result += f"   Order: {chunk.order_in_file}\n"
-                result += f"   Content: {content_preview}\n\n"
+                result += f"   Content:\n{chunk.content}\n\n"
 
         if len(declaring_chunks) > 5:
             result += f"... and {len(declaring_chunks) - 5} more locations\n"
@@ -482,6 +496,7 @@ def go_to_definition(entity_name: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def find_usages(entity_name: str, limit: int = 20) -> str:
     """
     Find all usages or calls of an entity in the codebase.
@@ -524,9 +539,8 @@ def find_usages(entity_name: str, limit: int = 20) -> str:
         for i, chunk_id in enumerate(calling_chunks[:limit], 1):
             if chunk_id in knowledge_graph.graph:
                 chunk = knowledge_graph.graph.nodes[chunk_id]['data']
-                content_preview = chunk.content[:150] + "..." if len(chunk.content) > 150 else chunk.content
                 result += f"{i}. {chunk.path} (chunk {chunk.order_in_file})\n"
-                result += f"   Content: {content_preview}\n\n"
+                result += f"   Content:\n{chunk.content}\n\n"
 
         if len(calling_chunks) > limit:
             result += f"... and {len(calling_chunks) - limit} more usages\n"
@@ -536,6 +550,7 @@ def find_usages(entity_name: str, limit: int = 20) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_file_structure(file_path: str) -> str:
     """
     Get an overview of the structure of a file.
@@ -589,6 +604,7 @@ def get_file_structure(file_path: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_related_chunks(chunk_id: str, relation_type: str = "calls") -> str:
     """
     Get chunks related to a given chunk by a specific relationship.
@@ -640,6 +656,7 @@ def get_related_chunks(chunk_id: str, relation_type: str = "calls") -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def list_all_entities(
     limit: int = 50,
     page: int = 1,
@@ -768,6 +785,7 @@ def list_all_entities(
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def diff_chunks(node_id_1: str, node_id_2: str) -> str:
     """
     Show the diff between two code chunks or nodes.
@@ -810,6 +828,7 @@ def diff_chunks(node_id_1: str, node_id_2: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def print_tree(root_id: str = "root", max_depth: int = 3) -> str:
     """
     Show a tree view of the repository structure.
@@ -873,6 +892,7 @@ def print_tree(root_id: str = "root", max_depth: int = 3) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def entity_relationships(node_id: str) -> str:
     """
     Show all relationships for a given entity or node.
@@ -923,6 +943,7 @@ def entity_relationships(node_id: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fuzzy: bool = True) -> str:
     """
     Search for nodes/entities by type and name substring with fuzzy matching support.
@@ -1045,6 +1066,7 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fu
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_chunk_context(node_id: str) -> str:
     """
     Get the full content of a code chunk along with its surrounding chunks.
@@ -1091,6 +1113,7 @@ def get_chunk_context(node_id: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_file_stats(path: str) -> str:
     """
     Get statistics for a file or directory.
@@ -1151,6 +1174,7 @@ def get_file_stats(path: str) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def find_path(source_id: str, target_id: str, max_depth: int = 5) -> str:
     """
     Find the shortest path between two nodes in the knowledge graph.
@@ -1199,6 +1223,7 @@ def find_path(source_id: str, target_id: str, max_depth: int = 5) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_subgraph(node_id: str, depth: int = 2, edge_types: Optional[str] = None) -> str:
     """
     Extract a subgraph around a node up to a specified depth.
@@ -1250,6 +1275,7 @@ def get_subgraph(node_id: str, depth: int = 2, edge_types: Optional[str] = None)
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def list_files_in_directory(directory_path: str = "", pattern: str = "*", recursive: bool = True, limit: int = 50) -> str:
     """
     List files in a directory with optional glob pattern matching.
@@ -1353,6 +1379,7 @@ def list_files_in_directory(directory_path: str = "", pattern: str = "*", recurs
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def find_classes_inheriting_from(base_class_name: str, limit: int = 20) -> str:
     """
     Find all classes that inherit from a given base class.
@@ -1453,6 +1480,7 @@ def find_classes_inheriting_from(base_class_name: str, limit: int = 20) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def find_files_importing(module_or_entity: str, limit: int = 30) -> str:
     """
     Find all files that import a specific module or entity.
@@ -1556,6 +1584,7 @@ def find_files_importing(module_or_entity: str, limit: int = 30) -> str:
         return f"Error: {str(e)}"
 
 
+@observe(as_type="tool")
 def get_concept_overview(concept: str, limit: int = 15) -> str:
     """
     Get a high-level overview of a concept across the codebase.
@@ -1638,7 +1667,7 @@ def get_concept_overview(concept: str, limit: int = 15) -> str:
                     related_chunks.append({
                         'id': nid,
                         'file': file_path,
-                        'preview': content[:100] + '...' if len(content) > 100 else content
+                        'content': content
                     })
 
         # Build the overview
@@ -1680,7 +1709,7 @@ def get_concept_overview(concept: str, limit: int = 15) -> str:
             result += f"📝 Code Snippets ({len(related_chunks)}):\n"
             for chunk in related_chunks[:5]:
                 result += f"  • {chunk['id']}\n"
-                result += f"    {chunk['preview']}\n\n"
+                result += f"    Content:\n{chunk['content']}\n\n"
             if len(related_chunks) > 5:
                 result += f"  ... and {len(related_chunks) - 5} more\n"
         

@@ -411,7 +411,7 @@ class RepoKnowledgeGraph:
         self.logger.info(f"Built alias map with {len(alias_map)} entries for resolution")
 
         resolved_count = 0
-        for file_path, file_data in chunk_info.items():
+        for file_path, file_data in tqdm.tqdm(chunk_info.items(), desc="Resolving called entities"):
             chunk_results = file_data['chunk_results']
             for chunk_id, chunk_node, declared_entities, called_entities in chunk_results:
                 for called_name in called_entities:
@@ -482,7 +482,7 @@ class RepoKnowledgeGraph:
                     existing.add(e)
 
         file_info = {}
-        for file_path, file_data in chunk_info.items():
+        for file_path, file_data in tqdm.tqdm(chunk_info.items(), desc="Creating file nodes"):
             self.logger.info(f"Creating file node for: {file_path}")
             parts = os.path.normpath(file_path).split(os.sep)
 
@@ -556,7 +556,7 @@ class RepoKnowledgeGraph:
                     existing.add(e)
 
         dir_agg = {}
-        for file_path, info in file_info.items():
+        for file_path, info in tqdm.tqdm(file_info.items(), desc="Creating directory nodes"):
             self.logger.info(f"Processing directory nodes for file: {file_path}")
             parts = os.path.normpath(file_path).split(os.sep)
             file_declared_entities = info['declared_entities']
@@ -610,7 +610,7 @@ class RepoKnowledgeGraph:
         self.graph.add_node('root', data=root_node, level=0)
         root_declared_entities = []
         root_called_entities = []
-        for dir_path, agg in dir_agg.items():
+        for dir_path, agg in tqdm.tqdm(dir_agg.items(), desc="Aggregating to root"):
             node = self.graph.nodes[dir_path]['data']
             if not hasattr(node, 'declared_entities'):
                 node.declared_entities = []
@@ -648,7 +648,7 @@ class RepoKnowledgeGraph:
         self.logger.info(f"Built alias map with {len(alias_map)} entries")
 
         # First pass: Create all entity nodes
-        for entity_name, info in self.entities.items():
+        for entity_name, info in tqdm.tqdm(self.entities.items(), desc="Creating entity nodes"):
             # Entity type is stored as a list in 'type' key, get first type or empty string
             entity_types = info.get('type', [])
             entity_type = entity_types[0] if entity_types else ''
@@ -690,7 +690,7 @@ class RepoKnowledgeGraph:
         self.logger.info("Resolving entity calls using alias matching...")
         resolved_calls = 0
 
-        for entity_name, info in self.entities.items():
+        for entity_name, info in tqdm.tqdm(self.entities.items(), desc="Resolving entity calls"):
             # Skip entities that already have declarations (they were matched directly)
             if info.get('declaring_chunk_ids'):
                 continue
@@ -834,7 +834,7 @@ class RepoKnowledgeGraph:
             'edges': []
         }
 
-        for node_id, node_attrs in self.graph.nodes(data=True):
+        for node_id, node_attrs in tqdm.tqdm(self.graph.nodes(data=True), desc="Serializing nodes"):
             if 'data' not in node_attrs:
                 self.logger.warning(f"Node {node_id} has no 'data' attribute, skipping in serialization")
                 continue
@@ -873,7 +873,7 @@ class RepoKnowledgeGraph:
 
             graph_data['nodes'].append(node_dict)
 
-        for u, v, attrs in self.graph.edges(data=True):
+        for u, v, attrs in tqdm.tqdm(self.graph.edges(data=True), desc="Serializing edges"):
             edge_data = {
                 'source': u,
                 'target': v,
@@ -912,7 +912,7 @@ class RepoKnowledgeGraph:
             instance.graph.add_node('root', data=root_node, level=0)
 
         # --- Rebuild nodes ---
-        for node_data in data_dict['nodes']:
+        for node_data in tqdm.tqdm(data_dict['nodes'], desc="Rebuilding nodes"):
             cls_name = node_data['class']
             node_cls = node_classes.get(cls_name, Node)
             kwargs = node_data['data']
@@ -944,7 +944,7 @@ class RepoKnowledgeGraph:
             instance.graph.add_node(node_data['id'], data=node_instance, level=instance._infer_level(node_instance))
 
         # --- Rebuild edges ---
-        for edge in data_dict['edges']:
+        for edge in tqdm.tqdm(data_dict['edges'], desc="Rebuilding edges"):
             source = edge['source']
             target = edge['target']
             if source in instance.graph and target in instance.graph:
@@ -957,7 +957,7 @@ class RepoKnowledgeGraph:
 
         # --- Rebuild instance.entities ---
         instance.entities = {}
-        for node_id, node_attrs in instance.graph.nodes(data=True):
+        for node_id, node_attrs in tqdm.tqdm(instance.graph.nodes(data=True), desc="Rebuilding entities"):
             node = node_attrs['data']
             declared_entities = getattr(node, 'declared_entities', [])
             called_entities = getattr(node, 'called_entities', [])

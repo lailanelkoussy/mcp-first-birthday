@@ -1,0 +1,90 @@
+services:
+  # Gradio MCP Interface - runs the MCP server with Gradio UI
+  gradio-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gradio-mcp-eval
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      # Specify your repository - change this to your repo
+      - REPO_URL=${REPO_URL:-https://github.com/huggingface/transformers}
+      # Langfuse Configuration
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST}
+    volumes:
+      - ./gradio_mcp.py:/app/gradio_mcp.py:ro
+      - ./pedagogia_graph_code_repo:/app/pedagogia_graph_code_repo:ro
+    ports:
+      - "7860:7860"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+      interval: 10s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    networks:
+      - kg-eval-network
+
+  # Batch Evaluation Runner - runs questions through the agent and logs results
+  batch-eval:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smolagent-batch-eval
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - MCP_SERVER_URL=http://gradio-mcp:7860/gradio_api/mcp/
+      - MAX_STEPS=${MAX_STEPS:-5}
+      # OpenAI Configuration (loaded from .env file)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o-mini}
+      - OPENAI_API_VERSION=${OPENAI_API_VERSION:-2024-02-15-preview}
+      # Azure Configuration (optional)
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      # HuggingFace Configuration (optional)
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_MODEL_NAME=${HF_MODEL_NAME}
+      - HF_INFERENCE_PROVIDER=${HF_INFERENCE_PROVIDER}
+      # Langfuse Configuration
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST}
+      # Evaluation Configuration
+      - MODEL_TYPE=${MODEL_TYPE:-openai}
+      - EVAL_CATEGORIES=${EVAL_CATEGORIES}
+      - EVAL_DIFFICULTIES=${EVAL_DIFFICULTIES}
+      - EVAL_LIMIT=${EVAL_LIMIT}
+      # Output file configuration
+      - OUTPUT_FILE=${OUTPUT_FILE:-/app/eval_results/evaluation_results.json}
+    depends_on:
+      gradio-mcp:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./eval_results:/app/eval_results
+    command: >
+      sh -c "python smolagent_batch_eval.py
+      --mcp-server-url http://gradio-mcp:7860/gradio_api/mcp/
+      --output /app/eval_results/evaluation_$$(date +%Y%m%d_%H%M%S).json
+      --model-type hf_inference
+      --max-steps 10
+      --model-name Qwen/Qwen3-Next-80B-A3B-Thinking
+      --base-url novita
+      --api-key \"$$HF_TOKEN\""
+    stdin_open: true
+    tty: true
+    networks:
+      - kg-eval-network
+
+networks:
+  kg-eval-network:
+    driver: bridge
