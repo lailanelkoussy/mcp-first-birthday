@@ -1711,6 +1711,12 @@ def create_gradio_app():
     """Create and configure the Gradio interface."""
 
     with gr.Blocks(title="Knowledge Graph MCP Server", theme=gr.themes.Soft()) as demo:
+        # Helper to render tool docstrings in the UI
+        def _tool_doc_md(func):
+            doc = (func.__doc__ or "No description available.").strip()
+            # Render as a fenced code block for readability
+            return f"**Description:**\n\n```\n{doc}\n```"
+
         gr.Markdown("""
         # 🔍 Knowledge Graph MCP Server
         
@@ -1721,6 +1727,7 @@ def create_gradio_app():
             stats_btn = gr.Button("Get Graph Statistics", variant="primary")
             stats_output = gr.Textbox(label="Statistics", lines=20, max_lines=30)
             stats_btn.click(fn=get_graph_stats, outputs=stats_output)
+            gr.Markdown(_tool_doc_md(get_graph_stats))
 
         with gr.Tab("🔎 Search"):
             with gr.Row():
@@ -1731,6 +1738,7 @@ def create_gradio_app():
                 with gr.Column():
                     search_output = gr.Textbox(label="Search Results", lines=20, max_lines=30)
             search_btn.click(fn=search_nodes, inputs=[search_query, search_limit], outputs=search_output)
+            gr.Markdown(_tool_doc_md(search_nodes))
 
         with gr.Tab("📝 Node Info"):
             with gr.Row():
@@ -1742,6 +1750,8 @@ def create_gradio_app():
                     node_output = gr.Textbox(label="Node Information", lines=20, max_lines=30)
             node_info_btn.click(fn=get_node_info, inputs=node_id_input, outputs=node_output)
             node_edges_btn.click(fn=get_node_edges, inputs=node_id_input, outputs=node_output)
+            gr.Markdown(_tool_doc_md(get_node_info))
+            gr.Markdown(_tool_doc_md(get_node_edges))
 
         with gr.Tab("🏗️ Structure"):
             gr.Markdown("### Repository Tree")
@@ -1753,6 +1763,7 @@ def create_gradio_app():
                 with gr.Column():
                     tree_output = gr.Textbox(label="Tree View", lines=20, max_lines=40)
             tree_btn.click(fn=print_tree, inputs=[tree_root, tree_depth], outputs=tree_output)
+            gr.Markdown(_tool_doc_md(print_tree))
 
             gr.Markdown("---")
             gr.Markdown("### File Structure")
@@ -1763,6 +1774,7 @@ def create_gradio_app():
                 with gr.Column():
                     file_structure_output = gr.Textbox(label="File Structure", lines=20, max_lines=30)
             file_structure_btn.click(fn=get_file_structure, inputs=file_path_input, outputs=file_structure_output)
+            gr.Markdown(_tool_doc_md(get_file_structure))
 
         with gr.Tab("🎯 Entities"):
             gr.Markdown("### List All Entities")
@@ -1787,6 +1799,7 @@ def create_gradio_app():
                 inputs=[entity_limit, entity_page, entity_type_filter, declared_in_repo],
                 outputs=list_entities_output,
             )
+            gr.Markdown(_tool_doc_md(list_all_entities))
 
             gr.Markdown("---")
             gr.Markdown("### Go to Definition")
@@ -1797,6 +1810,7 @@ def create_gradio_app():
                 with gr.Column():
                     def_output = gr.Textbox(label="Definition", lines=15, max_lines=25)
             def_btn.click(fn=go_to_definition, inputs=entity_name_def, outputs=def_output)
+            gr.Markdown(_tool_doc_md(go_to_definition))
 
             gr.Markdown("---")
             gr.Markdown("### Find Usages")
@@ -1808,6 +1822,7 @@ def create_gradio_app():
                 with gr.Column():
                     usage_output = gr.Textbox(label="Usages", lines=15, max_lines=25)
             usage_btn.click(fn=find_usages, inputs=[entity_name_usage, usage_limit], outputs=usage_output)
+            gr.Markdown(_tool_doc_md(find_usages))
 
         with gr.Tab("🔬 Discovery"):
             gr.Markdown("### List Nodes by Type")
@@ -1822,6 +1837,7 @@ def create_gradio_app():
                 with gr.Column():
                     type_output = gr.Textbox(label="Results", lines=20, max_lines=30)
             type_btn.click(fn=list_nodes_by_type, inputs=[node_type_input, type_limit], outputs=type_output)
+            gr.Markdown(_tool_doc_md(list_nodes_by_type))
 
             gr.Markdown("---")
             gr.Markdown("### Search by Type and Name")
@@ -1836,6 +1852,7 @@ def create_gradio_app():
                 with gr.Column():
                     search_type_output = gr.Textbox(label="Results", lines=20, max_lines=30)
             search_type_btn.click(fn=search_by_type_and_name, inputs=[search_type, search_name], outputs=search_type_output)
+            gr.Markdown(_tool_doc_md(search_by_type_and_name))
 
         with gr.Tab("🔗 Relationships"):
             gr.Markdown("### Get Neighbors")
@@ -1846,6 +1863,7 @@ def create_gradio_app():
                 with gr.Column():
                     neighbor_output = gr.Textbox(label="Neighbors", lines=20, max_lines=30)
             neighbor_btn.click(fn=get_neighbors, inputs=neighbor_node_id, outputs=neighbor_output)
+            gr.Markdown(_tool_doc_md(get_neighbors))
 
             gr.Markdown("---")
             gr.Markdown("### Entity Relationships")
@@ -1856,6 +1874,7 @@ def create_gradio_app():
                 with gr.Column():
                     rel_output = gr.Textbox(label="Relationships", lines=20, max_lines=30)
             rel_btn.click(fn=entity_relationships, inputs=rel_node_id, outputs=rel_output)
+            gr.Markdown(_tool_doc_md(entity_relationships))
 
             gr.Markdown("---")
             gr.Markdown("### Get Related Chunks")
@@ -1867,6 +1886,7 @@ def create_gradio_app():
                 with gr.Column():
                     related_output = gr.Textbox(label="Related Chunks", lines=20, max_lines=30)
             related_btn.click(fn=get_related_chunks, inputs=[related_chunk_id, relation_type], outputs=related_output)
+            gr.Markdown(_tool_doc_md(get_related_chunks))
 
             gr.Markdown("---")
             gr.Markdown("### Find Path Between Nodes")
@@ -1879,6 +1899,7 @@ def create_gradio_app():
                 with gr.Column():
                     path_output = gr.Textbox(label="Path", lines=20, max_lines=30)
             path_btn.click(fn=find_path, inputs=[path_source, path_target, path_depth], outputs=path_output)
+            gr.Markdown(_tool_doc_md(find_path))
 
             gr.Markdown("---")
             gr.Markdown("### Find Classes Inheriting From")
@@ -1889,6 +1910,7 @@ def create_gradio_app():
                 with gr.Column():
                     inherit_output = gr.Textbox(label="Inheriting Classes", lines=20, max_lines=30)
             inherit_btn.click(fn=find_classes_inheriting_from, inputs=base_class_input, outputs=inherit_output)
+            gr.Markdown(_tool_doc_md(find_classes_inheriting_from))
 
         with gr.Tab("📖 Context"):
             gr.Markdown("### Get Chunk Context")
@@ -1899,6 +1921,7 @@ def create_gradio_app():
                 with gr.Column():
                     context_output = gr.Textbox(label="Context", lines=25, max_lines=40)
             context_btn.click(fn=get_chunk_context, inputs=chunk_id_input, outputs=context_output)
+            gr.Markdown(_tool_doc_md(get_chunk_context))
 
             gr.Markdown("---")
             gr.Markdown("### Concept Overview")
@@ -1909,6 +1932,7 @@ def create_gradio_app():
                 with gr.Column():
                     concept_output = gr.Textbox(label="Concept Overview", lines=25, max_lines=40)
             concept_btn.click(fn=get_concept_overview, inputs=concept_input, outputs=concept_output)
+            gr.Markdown(_tool_doc_md(get_concept_overview))
 
             gr.Markdown("---")
             gr.Markdown("### Get Subgraph")
@@ -1921,6 +1945,7 @@ def create_gradio_app():
                 with gr.Column():
                     subgraph_output = gr.Textbox(label="Subgraph", lines=20, max_lines=30)
             subgraph_btn.click(fn=get_subgraph, inputs=[subgraph_node, subgraph_depth, subgraph_edge_types], outputs=subgraph_output)
+            gr.Markdown(_tool_doc_md(get_subgraph))
 
         with gr.Tab("📁 Files"):
             gr.Markdown("### List Files in Directory")
@@ -1934,6 +1959,7 @@ def create_gradio_app():
                 with gr.Column():
                     list_files_output = gr.Textbox(label="Files", lines=20, max_lines=30)
             list_files_btn.click(fn=list_files_in_directory, inputs=[dir_path, file_pattern, file_recursive, file_limit], outputs=list_files_output)
+            gr.Markdown(_tool_doc_md(list_files_in_directory))
 
             gr.Markdown("---")
             gr.Markdown("### Find Files Importing")
@@ -1945,6 +1971,7 @@ def create_gradio_app():
                 with gr.Column():
                     find_imports_output = gr.Textbox(label="Importing Files", lines=20, max_lines=30)
             find_imports_btn.click(fn=find_files_importing, inputs=[import_module, import_limit], outputs=find_imports_output)
+            gr.Markdown(_tool_doc_md(find_files_importing))
 
             gr.Markdown("---")
             gr.Markdown("### Get File Stats")
@@ -1955,6 +1982,7 @@ def create_gradio_app():
                 with gr.Column():
                     stats_output = gr.Textbox(label="Statistics", lines=20, max_lines=30)
             stats_btn.click(fn=get_file_stats, inputs=stats_path, outputs=stats_output)
+            gr.Markdown(_tool_doc_md(get_file_stats))
 
         with gr.Tab("🔍 Analysis"):
             gr.Markdown("### Diff Chunks")
@@ -1966,6 +1994,7 @@ def create_gradio_app():
                 with gr.Column():
                     diff_output = gr.Textbox(label="Diff Output", lines=25, max_lines=40)
             diff_btn.click(fn=diff_chunks, inputs=[diff_node1, diff_node2], outputs=diff_output)
+            gr.Markdown(_tool_doc_md(diff_chunks))
 
     return demo
 
