@@ -4,7 +4,7 @@
 
 ## 📚 What is EPITA CodeVoyager?
 
-**EPITA CodeVoyager** is an interactive **chat agent** powered by [Smolagents](https://github.com/huggingface/smolagents) that connects to the **EPITA Codebase Knowledge Graph MCP Server**. It enables users to ask natural language questions about a codebase and receive accurate, grounded answers based on the actual code — not hallucinations.
+**EPITA CodeVoyager** is an interactive **chat agent** powered by [Smolagents](https://github.com/huggingface/smolagents) that connects to the [**EPITA Codebase Knowledge Graph MCP Server**](https://huggingface.co/spaces/lailaelkoussy/transformers-library-knowledge-graph). It enables users to ask natural language questions about a codebase and receive accurate, grounded answers based on the actual code — not hallucinations.
 
 ### How It Works
 
@@ -30,13 +30,13 @@ This showcase demonstrates how the agent can help users understand and navigate 
 
 ### 🎯 Why This Matters for Education
 
-Understanding large codebases is a **fundamental skill** for software engineers. As explained in the [main README](./README.md), at **EPITA** (École pour l'informatique et les techniques avancées), students work on increasingly complex projects and need to understand codebases — whether their own, their teammates', or open-source libraries.
+Understanding large codebases is a **fundamental skill** for software engineers. At **EPITA** (École pour l'informatique et les techniques avancées), students work on increasingly complex projects and need to understand codebases — whether their own, their teammates', or open-source libraries.
 
 LLM-based coding assistants face significant challenges with large repositories: context window limitations, lack of structural awareness, missing relationships, and inefficient search. **EPITA CodeVoyager** solves these problems by using MCP tools to **search**, **navigate**, and **understand** code repositories intelligently, making it an ideal assistant for developers, students, and educators exploring complex codebases.
 
 ## 🔬 Use Case: EPITA Coding Courses
 
-Just like the [EPITA Codebase Knowledge Graph MCP Server](./README.md), **EPITA CodeVoyager** was developed with **educational applications** in mind, specifically to support **EPITA coding courses**.
+**EPITA CodeVoyager** was developed with **educational applications** in mind, specifically to support **EPITA coding courses**.
 
 ### 🎯 The Educational Challenge
 
@@ -176,7 +176,7 @@ Control how deeply the agent explores:
 ### Prerequisites
 
 - Python 3.10+
-- A running Code Knowledge Graph MCP Server (see main README)
+- A running Code Knowledge Graph MCP Server
 - API key for one of the supported LLM providers
 
 ### Installation
@@ -376,7 +376,6 @@ This project is developed as part of research at EPITA / Ionis Group.
 
 ## 🔗 Related Resources
 
-- [Main README](./README.md) - Code Knowledge Graph MCP Server documentation
 - [Smolagents](https://github.com/huggingface/smolagents) - The agent framework used
 - [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) - The protocol standard
 - [Gradio](https://gradio.app/) - Web interface framework
