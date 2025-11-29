@@ -1,0 +1,9 @@
+{
+    "servers": {
+        "transformers-code-graph": {
+            "url": "https://lailaelkoussy-transformers-library-knowledge-graph.hf.space/gradio_api/mcp/",
+            "type": "http"
+        }
+    },
+    "inputs": []
+}

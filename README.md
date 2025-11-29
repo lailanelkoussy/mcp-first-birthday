@@ -340,4 +340,61 @@ This project is developed as part of research at EPITA / Ionis Group.
 - [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) - The protocol standard
 - [FastMCP](https://github.com/jlowin/fastmcp) - Python MCP framework used
 - [LanceDB](https://lancedb.github.io/lancedb/) - Vector database for code indexing
-- [Salesforce SFR-Embedding-Code](https://huggingface.co/Salesforce/SFR-Embedding-Code-400M_R) - Code embedding model 
+- [Salesforce SFR-Embedding-Code](https://huggingface.co/Salesforce/SFR-Embedding-Code-400M_R) - Code embedding model
+
+## 🆚 VS Code Integration
+
+To use this MCP server with **GitHub Copilot** in VS Code, you need to configure an `mcp.json` file.
+
+### Configuration File Location
+
+Create or edit the file at `.vscode/mcp.json` in your workspace root:
+
+```
+your-workspace/
+├── .vscode/
+│   └── mcp.json    ← Place the configuration here
+├── src/
+└── ...
+```
+
+### Configuration Content
+
+Add the following content to `.vscode/mcp.json`:
+
+```jsonc
+{
+    "servers": {
+        "transformers-code-graph": {
+            "url": "https://lailaelkoussy-transformers-library-knowledge-graph.hf.space/gradio_api/mcp/",
+            "type": "http"
+        }
+    },
+    "inputs": []
+}
+```
+
+### What This Does
+
+- **`servers`**: Defines the MCP servers available to VS Code
+- **`transformers-code-graph`**: A custom name for this server connection
+- **`url`**: The endpoint of the hosted MCP server (here pointing to the HuggingFace Space)
+- **`type`**: Set to `"http"` for remote HTTP-based MCP servers
+
+### Using with Your Own Server
+
+If you're running your own MCP server locally, update the URL accordingly:
+
+```jsonc
+{
+    "servers": {
+        "my-code-graph": {
+            "url": "http://localhost:7860/gradio_api/mcp/",
+            "type": "http"
+        }
+    },
+    "inputs": []
+}
+```
+
+Once configured, GitHub Copilot in VS Code will have access to all the knowledge graph tools (search_nodes, go_to_definition, find_usages, etc.) to help navigate and understand your codebase. 
