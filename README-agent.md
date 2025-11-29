@@ -176,37 +176,21 @@ Control how deeply the agent explores:
 ### Prerequisites
 
 - Python 3.10+
-- A running Code Knowledge Graph MCP Server
 - API key for one of the supported LLM providers
 
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/lailanelkoussy/mcp-first-birthday.git
-cd mcp-first-birthday
-
-# Install dependencies
-pip install -r requirements.txt
+pip install smolagents gradio
 ```
 
 ### Running the Agent
 
-#### 1. Start the MCP Server First
+#### Launch the Chat Agent
 
 ```bash
-# Using the Gradio MCP server
-python gradio_mcp.py --graph-file my_knowledge_graph.json --host 0.0.0.0 --port 7860
-```
-
-#### 2. Launch the Chat Agent
-
-```bash
-# Connect to local MCP server
-python smolagent_chat.py --mcp-server-url http://localhost:7860/gradio_api/mcp/
-
-# Or connect to a remote server (e.g., HuggingFace Space)
-python smolagent_chat.py --mcp-server-url https://your-space.hf.space/gradio_api/mcp/
+# Connect to the hosted MCP server on HuggingFace Space
+python smolagent_chat.py --mcp-server-url https://lailaelkoussy-transformers-library-knowledge-graph.hf.space/gradio_api/mcp/
 
 # With custom host/port
 python smolagent_chat.py --host 0.0.0.0 --port 7861
@@ -215,7 +199,7 @@ python smolagent_chat.py --host 0.0.0.0 --port 7861
 python smolagent_chat.py --share
 ```
 
-#### 3. Configure the LLM in the Web UI
+#### Configure the LLM in the Web UI
 
 Once launched, open the Gradio interface and configure your LLM provider:
 
