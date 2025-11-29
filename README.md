@@ -158,10 +158,6 @@ The system also detects **API endpoints** for web frameworks (FastAPI, Flask, Sp
 ### Quick Start with Docker
 
 ```bash
-# Clone the repository
-git clone https://github.com/lailanelkoussy/mcp-first-birthday.git
-cd mcp-first-birthday
-
 # Start the MCP server with a sample knowledge graph
 docker-compose up
 ```
