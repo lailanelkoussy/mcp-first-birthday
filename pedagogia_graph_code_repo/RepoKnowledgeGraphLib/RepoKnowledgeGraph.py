@@ -46,13 +46,20 @@ class RepoKnowledgeGraph:
             "Use RepoKnowledgeGraph.from_path() or RepoKnowledgeGraph.load_graph_from_file() instead."
         )
 
-    def _initialize(self, model_service_kwargs: dict):
+    def _initialize(self, model_service_kwargs: dict, code_index_kwargs: Optional[dict] = None):
         """Internal initialization method."""
         setup_logger(LOGGER_NAME)
         self.logger = logging.getLogger(LOGGER_NAME)
         self.logger.info('Initializing RepoKnowledgeGraph instance.')
         self.code_parser = CodeParser()
-        self.model_service = create_model_service(**model_service_kwargs)
+        
+        # Determine if we should skip loading the embedder based on index_type
+        index_type = (code_index_kwargs or {}).get('index_type', 'hybrid')
+        skip_embedder = index_type == 'keyword-only'
+        if skip_embedder:
+            self.logger.info('Using keyword-only index, skipping embedder initialization')
+        
+        self.model_service = create_model_service(skip_embedder=skip_embedder, **model_service_kwargs)
         self.entities = {}
         self.graph = nx.DiGraph()
         self.knowledge_graph = nx.DiGraph()
@@ -89,7 +96,7 @@ class RepoKnowledgeGraph:
             RepoKnowledgeGraph: The constructed knowledge graph.
         """
         instance = cls.__new__(cls)  # Create instance without calling __init__
-        instance._initialize(model_service_kwargs=model_service_kwargs)
+        instance._initialize(model_service_kwargs=model_service_kwargs, code_index_kwargs=code_index_kwargs)
 
         instance.logger.info(f"Preparing to build knowledge graph from path: {path}")
 
@@ -161,7 +168,7 @@ class RepoKnowledgeGraph:
             model_service_kwargs = {}
 
         instance = cls.__new__(cls)
-        instance._initialize(model_service_kwargs=model_service_kwargs)
+        instance._initialize(model_service_kwargs=model_service_kwargs, code_index_kwargs=code_index_kwargs)
 
         instance.logger.info(f"Starting knowledge graph build from remote repository: {repo_url}")
 
@@ -891,7 +898,7 @@ class RepoKnowledgeGraph:
                   model_service_kwargs: Optional[dict] = None, code_index_kwargs: Optional[dict] = None):
         # ...existing code...
         instance = cls.__new__(cls)  # bypass __init__
-        instance._initialize(model_service_kwargs=model_service_kwargs)
+        instance._initialize(model_service_kwargs=model_service_kwargs, code_index_kwargs=code_index_kwargs)
 
         instance.logger.info("Deserializing graph from dictionary.")
 
@@ -1037,6 +1044,269 @@ class RepoKnowledgeGraph:
         logging.getLogger(LOGGER_NAME).info(f"Loaded graph data from file: {filepath}")
         return cls.from_dict(data, use_embed=use_embed, index_nodes=index_nodes,
                              model_service_kwargs=model_service_kwargs, code_index_kwargs=code_index_kwargs)
+
+    def to_hf_dataset(
+        self,
+        repo_id: str,
+        save_embeddings: bool = True,
+        private: bool = False,
+        token: Optional[str] = None,
+        commit_message: Optional[str] = None,
+    ):
+        """
+        Save the knowledge graph to a HuggingFace dataset on the Hub.
+
+        The graph is serialized into two splits:
+        - 'nodes': Contains all node data
+        - 'edges': Contains all edge relationships
+
+        Args:
+            repo_id (str): The HuggingFace dataset repository ID (e.g., 'username/dataset-name')
+            save_embeddings (bool): If True, saves embedding vectors for chunk nodes. 
+                                   If False, embeddings are excluded to reduce dataset size.
+            private (bool): Whether the dataset should be private. Defaults to False.
+            token (str, optional): HuggingFace API token. If not provided, uses the token
+                                  from huggingface_hub login or HF_TOKEN environment variable.
+            commit_message (str, optional): Custom commit message for the upload.
+
+        Returns:
+            str: URL of the uploaded dataset
+        """
+        try:
+            from datasets import Dataset, DatasetDict
+            from huggingface_hub import HfApi
+        except ImportError:
+            raise ImportError(
+                "huggingface_hub and datasets are required for HuggingFace integration. "
+                "Install them with: pip install huggingface_hub datasets"
+            )
+
+        self.logger.info(f"Preparing to save knowledge graph to HuggingFace dataset: {repo_id}")
+        self.logger.info(f"save_embeddings={save_embeddings}")
+
+        # Serialize nodes
+        nodes_data = []
+        for node_id, node_attrs in tqdm.tqdm(self.graph.nodes(data=True), desc="Serializing nodes for HF dataset"):
+            if 'data' not in node_attrs:
+                self.logger.warning(f"Node {node_id} has no 'data' attribute, skipping")
+                continue
+
+            node = node_attrs['data']
+            node_record = {
+                'node_id': node.id or node_id,
+                'node_class': node.__class__.__name__,
+                'name': node.name,
+                'node_type': node.node_type,
+                'description': getattr(node, 'description', '') or '',
+                'declared_entities': json.dumps(list(getattr(node, 'declared_entities', []))),
+                'called_entities': json.dumps(list(getattr(node, 'called_entities', []))),
+            }
+
+            # FileNode-specific fields
+            if isinstance(node, FileNode):
+                node_record['path'] = node.path
+                node_record['content'] = node.content
+                node_record['language'] = getattr(node, 'language', '')
+            else:
+                node_record['path'] = ''
+                node_record['content'] = ''
+                node_record['language'] = ''
+
+            # ChunkNode-specific fields
+            if isinstance(node, ChunkNode):
+                node_record['order_in_file'] = getattr(node, 'order_in_file', 0)
+                if save_embeddings:
+                    embedding = getattr(node, 'embedding', None)
+                    node_record['embedding'] = json.dumps(embedding if embedding is not None else [])
+                else:
+                    node_record['embedding'] = json.dumps([])
+            else:
+                node_record['order_in_file'] = -1
+                node_record['embedding'] = json.dumps([])
+
+            # EntityNode-specific fields
+            if isinstance(node, EntityNode):
+                node_record['entity_type'] = getattr(node, 'entity_type', '')
+                node_record['declaring_chunk_ids'] = json.dumps(list(getattr(node, 'declaring_chunk_ids', [])))
+                node_record['calling_chunk_ids'] = json.dumps(list(getattr(node, 'calling_chunk_ids', [])))
+                node_record['aliases'] = json.dumps(list(getattr(node, 'aliases', [])))
+            else:
+                node_record['entity_type'] = ''
+                node_record['declaring_chunk_ids'] = json.dumps([])
+                node_record['calling_chunk_ids'] = json.dumps([])
+                node_record['aliases'] = json.dumps([])
+
+            nodes_data.append(node_record)
+
+        # Serialize edges
+        edges_data = []
+        for source, target, attrs in tqdm.tqdm(self.graph.edges(data=True), desc="Serializing edges for HF dataset"):
+            edge_record = {
+                'source': source,
+                'target': target,
+                'relation': attrs.get('relation', ''),
+                'entities': json.dumps(list(attrs.get('entities', []))) if 'entities' in attrs else json.dumps([])
+            }
+            edges_data.append(edge_record)
+
+        # Create datasets
+        nodes_dataset = Dataset.from_list(nodes_data)
+        edges_dataset = Dataset.from_list(edges_data)
+
+        self.logger.info(f"Created dataset with {len(nodes_data)} nodes and {len(edges_data)} edges")
+
+        # Push to Hub - nodes and edges are pushed separately as different configs
+        # because they have different schemas
+        if commit_message is None:
+            base_commit_message = f"Upload knowledge graph ({len(nodes_data)} nodes, {len(edges_data)} edges)"
+            if not save_embeddings:
+                base_commit_message += " [embeddings excluded]"
+        else:
+            base_commit_message = commit_message
+
+        self.logger.info(f"Pushing nodes dataset to HuggingFace Hub: {repo_id}")
+        nodes_dataset.push_to_hub(
+            repo_id=repo_id,
+            config_name="nodes",
+            private=private,
+            token=token,
+            commit_message=f"{base_commit_message} - nodes"
+        )
+
+        self.logger.info(f"Pushing edges dataset to HuggingFace Hub: {repo_id}")
+        edges_dataset.push_to_hub(
+            repo_id=repo_id,
+            config_name="edges",
+            private=private,
+            token=token,
+            commit_message=f"{base_commit_message} - edges"
+        )
+
+        url = f"https://huggingface.co/datasets/{repo_id}"
+        self.logger.info(f"Dataset successfully uploaded to: {url}")
+        return url
+
+    @classmethod
+    def from_hf_dataset(
+        cls,
+        repo_id: str,
+        index_nodes: bool = True,
+        use_embed: bool = True,
+        model_service_kwargs: Optional[dict] = None,
+        code_index_kwargs: Optional[dict] = None,
+        token: Optional[str] = None,
+        revision: Optional[str] = None,
+    ):
+        """
+        Load a knowledge graph from a HuggingFace dataset on the Hub.
+
+        Args:
+            repo_id (str): The HuggingFace dataset repository ID (e.g., 'username/dataset-name')
+            index_nodes (bool): Whether to build a code index after loading. Defaults to True.
+            use_embed (bool): Whether to use existing embeddings from the dataset. Defaults to True.
+            model_service_kwargs (dict, optional): Arguments for the model service.
+            code_index_kwargs (dict, optional): Arguments for the code index.
+            token (str, optional): HuggingFace API token for private datasets.
+            revision (str, optional): Git revision (branch, tag, or commit) to load from.
+
+        Returns:
+            RepoKnowledgeGraph: The loaded knowledge graph instance.
+        """
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError(
+                "datasets library is required for HuggingFace integration. "
+                "Install it with: pip install datasets"
+            )
+
+        if model_service_kwargs is None:
+            model_service_kwargs = {}
+
+        logger = logging.getLogger(LOGGER_NAME)
+        logger.info(f"Loading knowledge graph from HuggingFace dataset: {repo_id}")
+
+        # Load dataset from Hub - nodes and edges are stored as separate configs
+        logger.info("Loading nodes config...")
+        nodes_dataset = load_dataset(repo_id, name="nodes", token=token, revision=revision)
+        logger.info("Loading edges config...")
+        edges_dataset = load_dataset(repo_id, name="edges", token=token, revision=revision)
+
+        # Get the train split (default split when pushing with config_name)
+        nodes_data = nodes_dataset['train']
+        edges_data = edges_dataset['train']
+
+        logger.info(f"Loaded {len(nodes_data)} nodes and {len(edges_data)} edges from dataset")
+
+        # Convert to the dict format expected by from_dict
+        graph_data = {
+            'nodes': [],
+            'edges': []
+        }
+
+        # Reconstruct nodes
+        for record in tqdm.tqdm(nodes_data, desc="Reconstructing nodes from HF dataset"):
+            node_dict = {
+                'id': record['node_id'],
+                'class': record['node_class'],
+                'data': {
+                    'id': record['node_id'],
+                    'name': record['name'],
+                    'node_type': record['node_type'],
+                    'description': record['description'],
+                    'declared_entities': json.loads(record['declared_entities']),
+                    'called_entities': json.loads(record['called_entities']),
+                }
+            }
+
+            # FileNode-specific fields
+            if record['node_class'] in ('FileNode', 'ChunkNode'):
+                node_dict['data']['path'] = record['path']
+                node_dict['data']['content'] = record['content']
+                node_dict['data']['language'] = record['language']
+
+            # ChunkNode-specific fields
+            if record['node_class'] == 'ChunkNode':
+                node_dict['data']['order_in_file'] = record['order_in_file']
+                embedding = json.loads(record['embedding'])
+                # Only use embedding if use_embed is True and embedding is non-empty
+                if use_embed and embedding:
+                    node_dict['data']['embedding'] = embedding
+                else:
+                    node_dict['data']['embedding'] = []
+
+            # EntityNode-specific fields
+            if record['node_class'] == 'EntityNode':
+                node_dict['data']['entity_type'] = record['entity_type']
+                node_dict['data']['declaring_chunk_ids'] = json.loads(record['declaring_chunk_ids'])
+                node_dict['data']['calling_chunk_ids'] = json.loads(record['calling_chunk_ids'])
+                node_dict['data']['aliases'] = json.loads(record['aliases'])
+
+            graph_data['nodes'].append(node_dict)
+
+        # Reconstruct edges
+        for record in tqdm.tqdm(edges_data, desc="Reconstructing edges from HF dataset"):
+            edge_dict = {
+                'source': record['source'],
+                'target': record['target'],
+                'relation': record['relation'],
+            }
+            entities = json.loads(record['entities'])
+            if entities:
+                edge_dict['entities'] = entities
+
+            graph_data['edges'].append(edge_dict)
+
+        logger.info("Dataset reconstruction complete, building graph...")
+
+        # Use from_dict to build the graph
+        return cls.from_dict(
+            graph_data,
+            index_nodes=index_nodes,
+            use_embed=use_embed,
+            model_service_kwargs=model_service_kwargs,
+            code_index_kwargs=code_index_kwargs
+        )
 
     def get_neighbors(self, node_id):
         self.logger.debug(f"Getting neighbors for node: {node_id}")

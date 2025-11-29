@@ -258,11 +258,19 @@ class SentenceTransformersModelService(ModelServiceInterface):
     Optimized for high-throughput batch embedding with GPU support.
     """
 
-    def __init__(self, model_name: str = None, embed_model_name: str = None, model_kwargs: dict = None):
+    def __init__(self, model_name: str = None, embed_model_name: str = None, model_kwargs: dict = None, skip_embedder: bool = False):
         super().__init__(model_name=model_name, model_kwargs=model_kwargs)
         model_kwargs = model_kwargs or {}
         # embed_model_name may be overridden by model_kwargs
         self.embed_model_name = embed_model_name or model_kwargs.get("EMBED_MODEL_NAME", self.embed_model_name)
+        self.skip_embedder = skip_embedder
+        self.embedding_model = None
+
+        if skip_embedder:
+            self.logger.info('Skipping embedder initialization (keyword-only mode)')
+            self.device = "cpu"
+            self.encode_batch_size = 32
+            return
 
         # Debug GPU detection
         self.logger.info(f'PyTorch available: {_TORCH_AVAILABLE}')
@@ -311,8 +319,17 @@ class SentenceTransformersModelService(ModelServiceInterface):
             except Exception as e:
                 self.logger.warning(f'Could not enable half precision: {e}')
 
+    def _check_embedder(self):
+        """Check if embedder is available, raise error if not."""
+        if self.skip_embedder or self.embedding_model is None:
+            raise RuntimeError(
+                "Embedding model not initialized. This model service was created with skip_embedder=True "
+                "(keyword-only mode). To use embeddings, set index_type to 'hybrid' or 'embedding-only'."
+            )
+
     def embed(self, text_to_embed: str) -> list:
         """Embed text using SentenceTransformers."""
+        self._check_embedder()
         embeddings = self.embedding_model.encode(
             [text_to_embed],
             convert_to_numpy=True,
@@ -330,6 +347,7 @@ class SentenceTransformersModelService(ModelServiceInterface):
 
     def embed_chunk_code(self, code_to_embed: str) -> list:
         """Embed code chunk using SentenceTransformers (no special prompt)."""
+        self._check_embedder()
         self.logger.debug(f'Embedding code using {self.embed_model_name}')
         embeddings = self.embedding_model.encode(
             [code_to_embed],
@@ -340,6 +358,7 @@ class SentenceTransformersModelService(ModelServiceInterface):
 
     def embed_query(self, query_to_embed: str) -> list:
         """Embed query using SentenceTransformers with retrieval prompt."""
+        self._check_embedder()
         self.logger.debug(f'Embedding query using {self.embed_model_name}')
         embeddings = self.embedding_model.encode(
             [query_to_embed],
@@ -353,6 +372,7 @@ class SentenceTransformersModelService(ModelServiceInterface):
         """Embed multiple texts in a batch using SentenceTransformers with optimized settings."""
         if not texts_to_embed:
             return []
+        self._check_embedder()
         self.logger.info(f'Batch embedding {len(texts_to_embed)} texts using {self.embed_model_name}')
         embeddings = self.embedding_model.encode(
             texts_to_embed,
@@ -367,6 +387,7 @@ class SentenceTransformersModelService(ModelServiceInterface):
         """Embed multiple code chunks in a batch using SentenceTransformers with optimized settings."""
         if not codes_to_embed:
             return []
+        self._check_embedder()
         self.logger.info(f'Batch embedding {len(codes_to_embed)} code chunks using {self.embed_model_name}')
         embeddings = self.embedding_model.encode(
             codes_to_embed,
@@ -378,11 +399,12 @@ class SentenceTransformersModelService(ModelServiceInterface):
         return [emb.tolist() if hasattr(emb, 'tolist') else list(emb) for emb in embeddings]
 
 
-def create_model_service(**kwargs) -> ModelServiceInterface:
+def create_model_service(skip_embedder: bool = False, **kwargs) -> ModelServiceInterface:
     """
     Factory function to create the appropriate ModelService based on embedder_type.
 
     Args:
+        skip_embedder (bool): If True, skip loading the embedding model (for keyword-only search).
         **kwargs: Additional arguments including 'embedder_type' ('openai' or 'sentence-transformers')
                 and optional 'model_kwargs' dict which can override any env var defaults.
     Returns:
@@ -394,7 +416,7 @@ def create_model_service(**kwargs) -> ModelServiceInterface:
     if embedder_type == 'openai':
         return OpenAIModelService(model_kwargs=model_kwargs, **kwargs)
     elif embedder_type == 'sentence-transformers':
-        return SentenceTransformersModelService(model_kwargs=model_kwargs, **kwargs)
+        return SentenceTransformersModelService(model_kwargs=model_kwargs, skip_embedder=skip_embedder, **kwargs)
     else:
         logging.getLogger(LOGGER_NAME).warning(
             f'Unknown embedder type: {embedder_type}, defaulting to OpenAI'

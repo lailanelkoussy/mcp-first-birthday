@@ -53,7 +53,7 @@ class BaseCodeIndex(ABC):
         self.logger.info(f"CodeIndex initialized with batch_size={self.embedding_batch_size}, index_type={index_type}")
 
     @abstractmethod
-    def query(self, query: str, n_results: int) -> dict:
+    def query(self, query: str, n_results: int=10) -> dict:
         """Query the index and return results"""
         pass
 
@@ -179,7 +179,7 @@ class WeaviateCodeIndex(BaseCodeIndex):
                     )
 
 
-    def query(self, query: str, n_results:int) -> dict:
+    def query(self, query: str, n_results:int=10) -> dict:
         """
         Perform search based on index_type:
         - 'embedding-only': pure vector search
@@ -357,7 +357,7 @@ class LanceDBCodeIndex(BaseCodeIndex):
         except Exception as e:
             self.logger.warning(f"Failed to create FTS index (keyword search may be slower): {e}")
 
-    def query(self, query: str, n_results: int) -> dict:
+    def query(self, query: str, n_results: int=10) -> dict:
         """
         Perform search based on index_type:
         - 'embedding-only': pure vector search
