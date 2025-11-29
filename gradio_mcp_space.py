@@ -1710,7 +1710,7 @@ def get_concept_overview(concept: str, limit: int = 15) -> str:
 def create_gradio_app():
     """Create and configure the Gradio interface."""
 
-    with gr.Blocks(title="Knowledge Graph MCP Server", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="Transformers Knowledge Graph Explorer — Knowledge Graph MCP Server", theme=gr.themes.Soft()) as demo:
         # Helper to render tool docstrings in the UI
         def _tool_doc_md(func):
             doc = (func.__doc__ or "No description available.").strip()
@@ -1718,9 +1718,9 @@ def create_gradio_app():
             return f"**Description:**\n\n```\n{doc}\n```"
 
         gr.Markdown("""
-        # 🔍 Knowledge Graph MCP Server
-        
-        Explore and query your codebase knowledge graph loaded from HuggingFace.
+        # 🔍 Transformers Knowledge Graph Explorer
+
+        Explore and query the Hugging Face Transformers library codebase using a knowledge graph.
         """)
 
         with gr.Tab("📊 Graph Overview"):
