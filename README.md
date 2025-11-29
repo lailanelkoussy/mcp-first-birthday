@@ -112,38 +112,38 @@ This project addresses these challenges by:
 
 The MCP server exposes the following tools for LLM agents:
 
-| Tool | Description |
-|------|-------------|
-| `search_nodes` | Semantic + keyword search for code chunks |
-| `get_node_info` | Detailed information about any node (file, chunk, entity) |
-| `get_node_edges` | Incoming and outgoing relationships of a node |
-| `go_to_definition` | Find where a function/class/variable is declared |
-| `find_usages` | Find all places where an entity is called/used |
-| `get_neighbors` | Get all directly connected nodes |
-| `get_file_structure` | Overview of a file's chunks and entities |
-| `get_related_chunks` | Find chunks related by a specific relationship type |
-| `list_all_entities` | List all tracked entities in the codebase |
-| `get_graph_stats` | Statistics about the knowledge graph |
-| `find_path` | Find shortest path between two nodes |
-| `get_subgraph` | Extract a subgraph around a node |
-| `print_tree` | Display repository structure as a tree |
-| `diff_chunks` | Compare content between two code chunks |
-| `search_by_type_and_name` | Search entities by type (class, function, etc.) and name |
-| `get_chunk_context` | Get a chunk with its surrounding context |
+| Tool                      | Description                                               |
+| ------------------------- | --------------------------------------------------------- |
+| `search_nodes`            | Semantic + keyword search for code chunks                 |
+| `get_node_info`           | Detailed information about any node (file, chunk, entity) |
+| `get_node_edges`          | Incoming and outgoing relationships of a node             |
+| `go_to_definition`        | Find where a function/class/variable is declared          |
+| `find_usages`             | Find all places where an entity is called/used            |
+| `get_neighbors`           | Get all directly connected nodes                          |
+| `get_file_structure`      | Overview of a file's chunks and entities                  |
+| `get_related_chunks`      | Find chunks related by a specific relationship type       |
+| `list_all_entities`       | List all tracked entities in the codebase                 |
+| `get_graph_stats`         | Statistics about the knowledge graph                      |
+| `find_path`               | Find shortest path between two nodes                      |
+| `get_subgraph`            | Extract a subgraph around a node                          |
+| `print_tree`              | Display repository structure as a tree                    |
+| `diff_chunks`             | Compare content between two code chunks                   |
+| `search_by_type_and_name` | Search entities by type (class, function, etc.) and name  |
+| `get_chunk_context`       | Get a chunk with its surrounding context                  |
 
 ## 🌐 Supported Languages
 
 The knowledge graph builder uses **AST-based entity extraction** for accurate parsing:
 
-| Language | Parser | Entity Types |
-|----------|--------|--------------|
-| Python | `ast` module | classes, functions, methods, variables, imports |
-| C | `libclang` | functions, structs, typedefs, variables |
-| C++ | `libclang` | classes, namespaces, methods, templates |
-| Java | `javalang` | classes, interfaces, methods, fields |
-| JavaScript/TypeScript | `esprima` | classes, functions, variables, imports |
-| Rust | `tree-sitter` | structs, enums, traits, functions, modules |
-| HTML | `BeautifulSoup` | DOM elements, inline JS extraction |
+| Language              | Parser          | Entity Types                                    |
+| --------------------- | --------------- | ----------------------------------------------- |
+| Python                | `ast` module    | classes, functions, methods, variables, imports |
+| C                     | `libclang`      | functions, structs, typedefs, variables         |
+| C++                   | `libclang`      | classes, namespaces, methods, templates         |
+| Java                  | `javalang`      | classes, interfaces, methods, fields            |
+| JavaScript/TypeScript | `esprima`       | classes, functions, variables, imports          |
+| Rust                  | `tree-sitter`   | structs, enums, traits, functions, modules      |
+| HTML                  | `BeautifulSoup` | DOM elements, inline JS extraction              |
 
 The system also detects **API endpoints** for web frameworks (FastAPI, Flask, Spring Boot, Actix-web, etc.).
 
