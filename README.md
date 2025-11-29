@@ -89,7 +89,7 @@ This project addresses these challenges by:
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    MCP SERVER (FastMCP)                          │
+│                    MCP SERVER (Gradio)                           │
 │  ┌─────────────┐ ┌────────────┐ ┌──────────────┐ ┌────────────┐ │
 │  │search_nodes │ │go_to_def   │ │find_usages   │ │get_neighbors│ │
 │  └─────────────┘ └────────────┘ └──────────────┘ └────────────┘ │
@@ -338,7 +338,7 @@ This project is developed as part of research at EPITA / Ionis Group.
 ## 🔗 Related Resources
 
 - [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) - The protocol standard
-- [FastMCP](https://github.com/jlowin/fastmcp) - Python MCP framework used
+- [Gradio](https://gradio.app/) - Python web interface framework with MCP support
 - [LanceDB](https://lancedb.github.io/lancedb/) - Vector database for code indexing
 - [Salesforce SFR-Embedding-Code](https://huggingface.co/Salesforce/SFR-Embedding-Code-400M_R) - Code embedding model
 
