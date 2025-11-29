@@ -6,6 +6,18 @@
 
 **EPITA CodeVoyager** is an interactive **chat agent** powered by [Smolagents](https://github.com/huggingface/smolagents) that connects to the **EPITA Codebase Knowledge Graph MCP Server**. It enables users to ask natural language questions about a codebase and receive accurate, grounded answers based on the actual code — not hallucinations.
 
+### How It Works
+
+Traditional LLMs generate answers from their training data, which can lead to outdated or fabricated information about specific codebases. **EPITA CodeVoyager** takes a different approach:
+
+1. **Tool-Augmented Reasoning**: Instead of guessing, the agent uses MCP (Model Context Protocol) tools to actively query the knowledge graph — searching for code, navigating relationships, and retrieving actual implementations.
+
+2. **Grounded Responses**: Every answer is backed by real code snippets, file paths, and structural information extracted directly from the repository.
+
+3. **Multi-Step Exploration**: Complex questions trigger chains of tool calls. For example, understanding how a class works might require: searching for its definition → examining its methods → tracing its inheritance hierarchy → finding usage examples.
+
+4. **Streaming Transparency**: Users see the agent's reasoning process in real-time — which tools are called, what information is retrieved, and how the final answer is synthesized.
+
 ### 🤗 Showcase: Hugging Face Transformers Library
 
 We demonstrate EPITA CodeVoyager on the [**Hugging Face Transformers**](https://github.com/huggingface/transformers) library — one of the most popular open-source ML libraries with:
