@@ -350,12 +350,57 @@ class LanceDBCodeIndex(BaseCodeIndex):
         self.logger.info(f"Created LanceDB table: {self.table_name}")
         
         # Create full-text search index for keyword and hybrid search
+        # LanceDB requires INVERTED index for full-text search
+        self._create_fts_indexes()
+
+    def _create_fts_indexes(self):
+        """
+        Create full-text search indexes on text columns.
+        
+        LanceDB supports two approaches for FTS:
+        1. create_fts_index() - Tantivy-based FTS (older API)
+        2. create_scalar_index() with INVERTED type - newer approach
+        
+        We try both approaches for compatibility across LanceDB versions.
+        """
+        fts_columns = ["content", "name", "description"]
+        index_created = False
+        
+        # First, try the newer create_fts_index API with Tantivy
         try:
-            # use_tantivy=True is required to support multiple field names as a list
-            self.table.create_fts_index(["content", "name", "description"], replace=True, use_tantivy=True)
-            self.logger.info(f"Created FTS index on table: {self.table_name}")
+            self.table.create_fts_index(fts_columns, replace=True, use_tantivy=True)
+            self.logger.info(f"Created FTS index (Tantivy) on columns: {fts_columns}")
+            index_created = True
         except Exception as e:
-            self.logger.warning(f"Failed to create FTS index (keyword search may be slower): {e}")
+            self.logger.debug(f"Tantivy FTS index creation failed: {e}")
+        
+        # If that didn't work, try creating INVERTED scalar indexes on each column
+        if not index_created:
+            try:
+                for column in fts_columns:
+                    try:
+                        self.table.create_scalar_index(column, index_type="INVERTED", replace=True)
+                        self.logger.info(f"Created INVERTED index on column: {column}")
+                        index_created = True
+                    except Exception as col_e:
+                        self.logger.debug(f"Failed to create INVERTED index on {column}: {col_e}")
+            except Exception as e:
+                self.logger.debug(f"Scalar index creation failed: {e}")
+        
+        # Last resort: try without use_tantivy flag
+        if not index_created:
+            try:
+                self.table.create_fts_index(fts_columns, replace=True)
+                self.logger.info(f"Created FTS index (default) on columns: {fts_columns}")
+                index_created = True
+            except Exception as e:
+                self.logger.debug(f"Default FTS index creation failed: {e}")
+        
+        if not index_created:
+            self.logger.warning(
+                "Failed to create any FTS index. Full-text search will fall back to scanning. "
+                "This may be slower for large datasets."
+            )
 
     def query(self, query: str, n_results: int=10) -> dict:
         """
