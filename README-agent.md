@@ -112,11 +112,11 @@ Beyond the Transformers library showcase, **EPITA CodeVoyager** (backed by the E
 │  │  • Synthesizes final answer from tool results               │ │
 │  └─────────────────────────────────────────────────────────────┘ │
 │                                                                   │
-│  Supported LLM Backends:                                         │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────────┐             │
-│  │  OpenAI  │  │ Azure OpenAI │  │ HF Inference   │             │
-│  │ gpt-4o   │  │    gpt-4     │  │ Qwen2.5-Coder  │             │
-│  └──────────┘  └──────────────┘  └────────────────┘             │
+│  LLM Backend: Any OpenAI-compatible API                          │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │  Supports any HTTP REST service with OpenAI-style interface │ │
+│  │  (OpenAI, Azure, HuggingFace Inference, vLLM, Ollama, etc.) │ │
+│  └─────────────────────────────────────────────────────────────┘ │
 └───────────────────────────────┬───────────────────────────────────┘
                                 │ MCP Protocol (HTTP)
                                 ▼
