@@ -16,6 +16,42 @@ pinned: false
 
 This project provides a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that transforms code repositories into navigable **knowledge graphs**. It enables Large Language Model (LLM) based agents to efficiently explore, understand, and reason about complex codebases — a critical capability for modern software engineering education and practice.
 
+## 🔬 Use Case: EPITA Coding Courses
+
+This project was developed with **educational applications** in mind, specifically to support **EPITA coding courses**:
+
+### 🔍 Enhanced Code Discovery for Agents
+
+LLM-based coding agents can use this tool to **better discover and navigate large repositories**. Instead of blindly searching through files, agents can:
+
+- Query the knowledge graph to understand the overall architecture
+- Follow relationships between modules, classes, and functions
+- Identify entry points and critical code paths
+- Understand how different parts of the codebase interact
+
+### 📈 Detecting Areas for Code Improvement
+
+For EPITA courses, this tool helps agents **identify areas where student code can be improved**:
+
+- **Dead Code Detection**: Find unused functions, classes, or variables
+- **Circular Dependencies**: Detect problematic import cycles between modules
+- **Code Coupling Analysis**: Identify tightly coupled components that should be refactored
+- **Missing Documentation**: Find undocumented public APIs and complex functions
+- **Complexity Hotspots**: Locate chunks with many outgoing calls (high coupling)
+- **Orphan Code**: Detect code that is declared but never called
+
+### 🎓 EPITA Course Integration
+
+- **Project Reviews**: Quickly understand student project architectures before grading
+- **Automated Feedback**: Integrate with LLM tutors to provide targeted improvement suggestions
+- **Code Quality Assessment**: Consistent evaluation criteria across student submissions
+- **Learning Tool**: Help students navigate and understand unfamiliar codebases (e.g., open-source projects)
+- **Research**: Study code organization patterns across student projects
+
+The MCP interface makes it easy to integrate with any LLM-based tutoring or code review system used in EPITA courses.
+
+---
+
 ### 🎯 The Problem We Solve
 
 At **EPITA** (École pour l'informatique et les techniques avancées), students work on increasingly complex software projects throughout their curriculum. Understanding large codebases — whether their own, their teammates', or open-source libraries — is a fundamental skill for any computer science engineer.
@@ -280,17 +316,6 @@ mcp-first-birthday/
 │   └── tests/                       # Test suite
 └── docker-compose*.yml         # Docker configurations
 ```
-
-## 🔬 For Educators & Researchers
-
-This project was developed with **educational applications** in mind:
-
-- **Project Reviews**: Quickly understand student project architectures
-- **Code Quality Assessment**: Identify circular dependencies and coupling issues
-- **Learning Tool**: Help students navigate unfamiliar codebases
-- **Research**: Study code organization patterns across repositories
-
-The MCP interface makes it easy to integrate with any LLM-based tutoring or code review system.
 
 
 
