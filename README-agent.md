@@ -43,15 +43,17 @@ However, navigating a library with **thousands of files** is overwhelming. Stude
 ### 🔍 Intelligent Code Q&A
 
 Instead of manually searching through thousands of files, users can simply ask:
+
+- *"How does the `AutoModel` class work?"*
 - *"What classes inherit from `PreTrainedModel`?"*
 - *"How is tokenization implemented in the library?"*
 - *"What files are involved in the BERT implementation?"*
 
-The agent uses MCP tools to explore the codebase, gather relevant information, and provide accurate, well-structured answers.
+The agent uses MCP tools from the **EPITA Codebase Knowledge Graph MCP Server** to explore the codebase, gather relevant information, and provide accurate, well-structured answers grounded in the actual code.
 
 ### 📈 Learning Through Exploration
 
-For EPITA courses, this agent helps students:
+For EPITA courses and code learning in general, EPITA CodeVoyager helps users:
 
 - **Understand Architecture**: Ask about how components are organized and connected
 - **Trace Code Flow**: Follow function calls and understand execution paths
@@ -64,6 +66,16 @@ For EPITA courses, this agent helps students:
 - **Office Hours Support**: Integrate with tutoring systems to answer code-related questions
 - **Project Onboarding**: Help students understand project codebases quickly
 - **Self-Paced Study**: Enable students to learn complex libraries at their own pace
+
+### 🎓 Broader Applications
+
+Beyond the Transformers library showcase, **EPITA CodeVoyager** (backed by the EPITA Codebase Knowledge Graph MCP Server) can be applied to any codebase:
+
+- **Student Projects**: Help students understand their teammates' code during group projects
+- **Open Source Onboarding**: Quickly learn how popular libraries are structured
+- **Code Reviews**: Understand unfamiliar code before reviewing or contributing
+- **Research**: Analyze code patterns across different repositories
+- **Industry**: Onboard new developers to large enterprise codebases
 
 ---
 
@@ -293,7 +305,7 @@ export MAX_STEPS=5
 
 ### KnowledgeGraphChatAgent Class
 
-The main agent class handles:
+The main agent class (powering EPITA CodeVoyager) handles:
 
 ```python
 class KnowledgeGraphChatAgent:
