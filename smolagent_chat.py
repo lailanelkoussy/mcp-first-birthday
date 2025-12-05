@@ -12,7 +12,7 @@ import re
 from typing import List, Dict, Any
 import gradio as gr
 from gradio import ChatMessage
-from smolagents import MCPClient, ToolCallingAgent, OpenAIServerModel, AzureOpenAIModel, InferenceClientModel, stream_to_gradio
+from smolagents import MCPClient, ToolCallingAgent, CodeAgent, OpenAIServerModel, AzureOpenAIModel, InferenceClientModel, stream_to_gradio
 
 
 class Colors:
@@ -35,6 +35,54 @@ def print_error(message):
 
 def print_info(message):
     print(f"{Colors.YELLOW}ℹ️  {message}{Colors.ENDC}")
+
+def _get_mcp_header():
+    html = """
+    <style>
+        .header-container {
+            background: linear-gradient(314deg, #64748b 0%, #373f4a 100%);
+            padding: 25px 20px;
+            border-radius: 16px;
+            color: white !important;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+                        0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            margin-bottom: 25px;
+            font-family: 'Inter', -apple-system, sans-serif;
+            text-align: center;
+        }
+
+        .header-title {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .header-subtitle {
+            font-size: 16px;
+            font-weight: 400;
+        }
+
+        .header-link a {
+            color: #cfe4ff;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .header-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+
+    <div class="header-container">
+        <div class="header-title">EPITA CodeVoyager – Transformers Explorer</div>
+        <div class="header-subtitle">
+            <span class="header-link">
+                <a href="https://www.epita.fr/" target="_blank">Visit EPITA Website</a>
+            </span>
+        </div>
+    </div>
+    """
+    return html
 
 
 CUSTOM_INSTRUCTIONS = """You are an expert assistant for understanding the Hugging Face Transformers library.
@@ -63,6 +111,7 @@ class KnowledgeGraphChatAgent:
         self.mcp_server_url = mcp_server_url or os.getenv("MCP_SERVER_URL", "http://localhost:4000/mcp")
         self.model = None
         self.agent = None
+        self.agent_type = None
         self.mcp_client = None
         self.tools = None
         self.conversation_history = []
@@ -152,7 +201,7 @@ class KnowledgeGraphChatAgent:
             print_error(f"Failed to initialize model: {e}")
             raise
     
-    def _initialize_agent(self, max_steps: int = None):
+    def _initialize_agent(self, agent_type: str = "tool_calling", max_steps: int = None):
         """Initialize the agent using the configured model and pre-loaded MCP tools."""
         if not self.model:
             raise ValueError("Model must be initialized before creating agent!")
@@ -161,16 +210,30 @@ class KnowledgeGraphChatAgent:
         
         try:
             max_steps = max_steps or int(os.getenv("MAX_STEPS", 5))
+            self.agent_type = agent_type
             
-            self.agent = ToolCallingAgent(
-                tools=self.tools,
-                model=self.model,
-                name="KnowledgeGraphAgent",
-                max_steps=max_steps,
-                add_base_tools=False,
-                instructions=CUSTOM_INSTRUCTIONS
-            )
-            print_success("Agent initialized successfully!")
+            print_info(f"Initializing {agent_type} agent...")
+            
+            if agent_type == "code":
+                self.agent = CodeAgent(
+                    tools=self.tools,
+                    model=self.model,
+                    name="KnowledgeGraphCodeAgent",
+                    max_steps=max_steps,
+                    add_base_tools=False,
+                    additional_authorized_imports=["numpy", "pandas", "re", "json"],
+                    instructions=CUSTOM_INSTRUCTIONS
+                )
+            else:  # tool_calling
+                self.agent = ToolCallingAgent(
+                    tools=self.tools,
+                    model=self.model,
+                    name="KnowledgeGraphAgent",
+                    max_steps=max_steps,
+                    add_base_tools=False,
+                    instructions=CUSTOM_INSTRUCTIONS
+                )
+            print_success(f"{agent_type.title()} agent initialized successfully!")
         except Exception as e:
             print_error(f"Failed to initialize agent: {e}")
             raise
@@ -277,15 +340,15 @@ class KnowledgeGraphChatAgent:
 def create_gradio_interface(agent: KnowledgeGraphChatAgent):
     """Create the Gradio chat interface with model configuration."""
     
-    with gr.Blocks(title="🤗 Transformers Q&A Agent", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="EPITA CodeVoyager on 🤗 Transformer Library") as demo:
+        gr.HTML(_get_mcp_header())
         
         # ==================== INITIALIZATION SECTION ====================
         with gr.Column(visible=not agent.is_ready()) as init_section:
             gr.Markdown("""
-            # 🤗 Transformers Library Q&A Agent
+            # EPITA CodeVoyager on 🤗 Transformer Library
             
-            Welcome! This AI agent helps you understand the **Hugging Face Transformers** library.
-            Ask questions about the codebase, find functions, explore classes, and understand how components work together.
+            Welcome! This AI agent helps users navigate and understand large codebases through natural language. Powered by Smolagents, it connects to the EPITA Code Knowledge Graph MCP Server and uses MCP tools to search, explore, and retrieve actual code — delivering grounded answers instead of hallucinations. Users see the agent's reasoning in real-time: which tools are called, what information is retrieved, and how answers are synthesized. Showcased on the Hugging Face Transformers library (4,000+ files, 400k+ lines of code), it demonstrates how complex codebases can be explored through simple conversational queries. Developed for EPITA, it supports students, educators, and developers in understanding unfamiliar projects efficiently and help analysing code practices.
             
             Configure your AI model below to get started. The MCP server tools are already connected!
             """)
@@ -295,22 +358,41 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                 
                 with gr.Row():
                     model_type = gr.Dropdown(
-                        choices=["openai", "azure", "hf_inference"],
-                        value="openai",
+                        choices=["hf_inference", "openai", "azure"],
+                        value="hf_inference",
                         label="Model Type",
-                        info="Choose between OpenAI, Azure OpenAI, or HuggingFace Inference"
+                        info="Choose between HuggingFace Inference, OpenAI, or Azure OpenAI"
                     )
+                
+                # Agent type selection
+                with gr.Row():
+                    agent_type = gr.Radio(
+                        choices=["tool_calling", "code"],
+                        value="tool_calling",
+                        label="Agent Type",
+                        info="Choose the agent architecture"
+                    )
+                
+                gr.Markdown("""
+                **Agent Type Guide:**
+
+- **Tool Calling Agent** (Recommended): Uses native function-calling capabilities. Works well for both medium and large models (GPT-4, Claude, Qwen 70B+). More reliable and efficient because the output format is constrained.
+
+- **Code Agent**: Generates Python code to solve tasks. Best used with larger, more capable models that have strong code-generation abilities. Smaller models often struggle with correctness, debugging, and multi-step reasoning.
+
+⚠️ **Note**: Smaller models (<30B parameters) generally struggle with both complex tool calling and code generation, but code generation tends to be more error-prone. For best results, use high-capability models like GPT-4, Claude 3.5, or Qwen 70B+ for Code Agent workflows, and prefer Tool Calling Agents whenever possible.
+""")
                 
                 # Model name field (shown for all types)
                 with gr.Row() as model_name_row:
                     model_name = gr.Textbox(
                         label="Model Name",
-                        value=os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini'),
-                        info="e.g., gpt-4o-mini, gpt-4, Qwen/Qwen2.5-Coder-32B-Instruct"
+                        value=os.environ.get('HF_MODEL_NAME', 'Qwen/Qwen3-Next-80B-A3B-Instruct'),
+                        info="e.g., Qwen/Qwen3-Next-80B-A3B-Instruct, gpt-4o-mini"
                     )
                 
                 # OpenAI specific fields
-                with gr.Row(visible=True) as openai_fields:
+                with gr.Row(visible=False) as openai_fields:
                     api_key = gr.Textbox(
                         label="API Key",
                         value=os.environ.get('OPENAI_API_KEY', ''),
@@ -345,7 +427,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                     )
                 
                 # HuggingFace Inference specific fields
-                with gr.Row(visible=False) as hf_fields:
+                with gr.Row(visible=True) as hf_fields:
                     hf_token = gr.Textbox(
                         label="HuggingFace Token",
                         value=os.environ.get('HF_TOKEN', ''),
@@ -354,8 +436,8 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                     )
                     hf_provider = gr.Textbox(
                         label="Inference Provider (Optional)",
-                        value=os.environ.get('HF_INFERENCE_PROVIDER', ''),
-                        info="Provider name (e.g., 'together', 'fireworks-ai', 'cerebras'). Leave empty for auto."
+                        value=os.environ.get('HF_INFERENCE_PROVIDER', 'novita'),
+                        info="Provider name (e.g., 'novita', 'together', 'fireworks-ai'). Leave empty for auto."
                     )
                 
                 with gr.Row():
@@ -403,7 +485,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
         # ==================== CHAT SECTION ====================
         with gr.Column(visible=agent.is_ready()) as chat_section:
             gr.Markdown("""
-            # 🤗 Transformers Library Q&A Agent
+            # EPITA CodeVoyager on 🤗 Transformer Library
             
             Ask me anything about the **Hugging Face Transformers** library! I can help you:
             - 🔍 Find and explain functions, classes, and methods
@@ -413,7 +495,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
             """)
             
             chatbot = gr.Chatbot(
-                label="Transformers Q&A",
+                label="EPITA CodeVoyager on 🤗 Transformer Library",
                 height=500,
                 show_copy_button=True,
                 type="messages"
@@ -441,7 +523,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
             """)
         
         # Handle agent initialization
-        def initialize_agent(mtype, mname, akey, burl, azure_akey, azure_ep, aversion, hf_tok, hf_prov, msteps):
+        def initialize_agent(atype, mtype, mname, akey, burl, azure_akey, azure_ep, aversion, hf_tok, hf_prov, msteps):
             try:
                 if mtype == "azure":
                     agent._initialize_model(
@@ -465,9 +547,9 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
                         base_url=burl,
                         model_name=mname
                     )
-                agent._initialize_agent(max_steps=int(msteps))
+                agent._initialize_agent(agent_type=atype, max_steps=int(msteps))
                 return (
-                    gr.update(value="**Status:** ✅ Agent Ready!"),
+                    gr.update(value=f"**Status:** ✅ Agent Ready! (Using {atype.replace('_', ' ').title()} Agent)"),
                     gr.update(visible=False),  # Hide init section
                     gr.update(visible=True)    # Show chat section
                 )
@@ -481,7 +563,7 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
         
         init_btn.click(
             fn=initialize_agent,
-            inputs=[model_type, model_name, api_key, base_url, azure_api_key, azure_endpoint, api_version, hf_token, hf_provider, max_steps],
+            inputs=[agent_type, model_type, model_name, api_key, base_url, azure_api_key, azure_endpoint, api_version, hf_token, hf_provider, max_steps],
             outputs=[init_status, init_section, chat_section]
         )
         
@@ -512,9 +594,9 @@ def create_gradio_interface(agent: KnowledgeGraphChatAgent):
 
 def main():
     parser = argparse.ArgumentParser(description="Smolagents Chat Agent with Gradio Interface")
-    parser.add_argument("--mcp-server-url", type=str, help="URL of the MCP server")
+    parser.add_argument("--mcp-server-url", type=str, help="URL of the MCP server", default=os.getenv("MCP_SERVER_URL", "http://localhost:4000/mcp"))
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=7861, help="Port to bind to")
+    parser.add_argument("--port", type=int, default=7860, help="Port to bind to")
     parser.add_argument("--share", action="store_true", help="Create a public link")
     
     args = parser.parse_args()
@@ -549,3 +631,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

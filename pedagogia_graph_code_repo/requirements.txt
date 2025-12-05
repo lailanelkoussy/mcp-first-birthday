@@ -68,6 +68,7 @@ httpx-sse==0.4.3
 huggingface-hub==0.36.0
 humanfriendly==10.0
 hyperframe==6.1.0
+fastmcp==2.3.4
 idna==3.11
 importlib_metadata==8.7.0
 importlib_resources==6.5.2
@@ -179,6 +180,7 @@ PyPika==0.48.9
 pyproject_hooks==1.2.0
 pystache==0.6.8
 pytest==8.4.2
+pytest-asyncio==0.26.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-multipart==0.0.20

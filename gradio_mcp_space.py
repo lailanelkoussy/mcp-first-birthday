@@ -9,6 +9,9 @@ import fnmatch
 import re
 from typing import Optional, List
 import gradio as gr
+from pedagogia_graph_code_repo.RepoKnowledgeGraphLib.utils.chunk_utils import (
+        organize_chunks_by_file_name, join_organized_chunks
+    )
 
 # Optional Langfuse integration
 try:
@@ -27,8 +30,49 @@ except Exception as e:
             return func
         return decorator
 
+
+def _sanitize_value(v):
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, dict):
+        return {k: _sanitize_value(val) for k, val in v.items()}
+    if isinstance(v, (list, tuple)):
+        t = type(v)
+        return t(_sanitize_value(x) for x in v)
+    return v
+
+
+def sanitize_inputs(func):
+    """Decorator that trims whitespace from all string args/kwargs before calling func."""
+    def wrapper(*args, **kwargs):
+        new_args = tuple(_sanitize_value(a) for a in args)
+        new_kwargs = {k: _sanitize_value(v) for k, v in kwargs.items()}
+        return func(*new_args, **new_kwargs)
+    # preserve original attributes
+    try:
+        wrapper.__name__ = func.__name__
+        wrapper.__doc__ = func.__doc__
+    except Exception:
+        pass
+    return wrapper
+
+
+# Wrap the existing `observe` decorator (from langfuse or fallback) so that
+# all observed tools receive sanitized inputs automatically. This avoids
+# having to manually add `@sanitize_inputs` above every `@observe`.
+try:
+    _original_observe = observe
+    def _observe_with_sanitize(*o_args, **o_kwargs):
+        def decorator(f):
+            return _original_observe(*o_args, **o_kwargs)(sanitize_inputs(f))
+        return decorator
+    observe = _observe_with_sanitize
+except Exception:
+    # If anything goes wrong, keep the existing observe as-is.
+    pass
+
 # Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'pedagogia_graph_code_repo'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'RepoKnowledgeGraphLib'))
 
 from pedagogia_graph_code_repo.RepoKnowledgeGraphLib.RepoKnowledgeGraph import RepoKnowledgeGraph
 
@@ -201,15 +245,16 @@ Incoming Edges ({len(incoming)}):
 
 
 @observe(as_type="tool")
-def search_nodes(query: str, limit: int = 10) -> str:
+def search_nodes(query: str, limit: int = 10, page: int = 1) -> str:
     """
-    Search for nodes in the knowledge graph by query string.
+    Search for chunk nodes in the knowledge graph by query string.
 
-    Uses semantic and keyword search via the code index.
+    Uses keyword search via the code index.
 
     Args:
         query: The search string to match against code index
-        limit: Maximum number of results to return (default: 10)
+        limit: Maximum number of results to return per page (default: 10)
+        page: Page number for pagination, 1-indexed (default: 1)
 
     Returns:
         str: A formatted string with search results
@@ -225,73 +270,69 @@ def search_nodes(query: str, limit: int = 10) -> str:
             except ValueError:
                 return f"Error: 'limit' must be an integer, got '{limit}'"
         
+        # Convert page to int if it's a string
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+        
         if limit <= 0:
             return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
 
-        results = knowledge_graph.code_index.query(query, n_results=limit)
+        # Fetch more results to support pagination
+        max_fetch = limit * page
+        results = knowledge_graph.code_index.query(query, n_results=max_fetch)
         metadatas = results.get("metadatas", [[]])[0]
 
         if not metadatas:
             return f"No results found for '{query}'."
 
-        result = f"Search Results for '{query}' ({len(metadatas)} results):\n"
+        total = len(metadatas)
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} results at {limit} per page)"
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = metadatas[start_idx:end_idx]
+
+        result = f"Search Results for '{query}' (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, res in enumerate(metadatas, 1):
+        for i, res in enumerate(page_slice, start=start_idx + 1):
             result += f"{i}. ID: {res.get('id', 'N/A')}\n"
             content = res.get('content', '')
             if content:
                 result += f"   Content: {content}\n"
-
-            # Handle declared entities - parse JSON if it's a string
-            declared = res.get('declared_entities', '')
-            if declared and declared != '[]':
-                try:
-                    # Try to parse as JSON if it's a string
-                    import json
-                    if isinstance(declared, str):
-                        declared = json.loads(declared)
-                    # Extract entity names from the list of dicts
-                    if isinstance(declared, list) and declared:
-                        entity_names = [e.get('name', str(e)) if isinstance(e, dict) else str(e) for e in declared[:10]]
-                        result += f"   Declared: {', '.join(entity_names)}\n"
-                        if len(declared) > 10:
-                            result += f"             ... and {len(declared) - 10} more\n"
-                except (json.JSONDecodeError, AttributeError):
-                    result += f"   Declared: {declared}\n"
-
-            # Handle called entities - parse JSON if it's a string
-            called = res.get('called_entities', '')
-            if called and called != '[]':
-                try:
-                    # Try to parse as JSON if it's a string
-                    import json
-                    if isinstance(called, str):
-                        called = json.loads(called)
-                    # Extract entity names from the list of dicts
-                    if isinstance(called, list) and called:
-                        entity_names = [e.get('name', str(e)) if isinstance(e, dict) else str(e) for e in called[:10]]
-                        result += f"   Called: {', '.join(entity_names)}\n"
-                        if len(called) > 10:
-                            result += f"             ... and {len(called) - 10} more\n"
-                except (json.JSONDecodeError, AttributeError):
-                    result += f"   Called: {called}\n"
             result += "\n"
+
+        # Pagination hint
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
 
         return result
     except Exception as e:
         return f"Error: {str(e)}"
 
-
 @observe(as_type="tool")
 def get_graph_stats() -> str:
     """
-    Get overall statistics about the knowledge graph.
+    Get comprehensive statistics about the knowledge graph.
 
-    Includes node and edge counts, types, and relations.
+    Returns detailed information about the repository structure including:
+    - Chunks: Code segments that represent portions of files (functions, classes, etc.)
+    - Entities: Programming constructs like classes, functions, methods, variables
+    - Files and directories in the repository
+    - Relationships between different components
+
+    For entity nodes, provides a breakdown by entity type (class, function, method, etc.).
 
     Returns:
-        str: A formatted string with graph statistics
+        str: A formatted string with comprehensive graph statistics
     """
     if knowledge_graph is None:
         return "Error: Knowledge graph not initialized"
@@ -301,90 +342,204 @@ def get_graph_stats() -> str:
         num_nodes = g.number_of_nodes()
         num_edges = g.number_of_edges()
 
+        # Count node types
         node_types = {}
+        entity_breakdown = {}
+        
         for _, node_attrs in g.nodes(data=True):
             node_type = getattr(node_attrs['data'], 'node_type', 'Unknown')
             node_types[node_type] = node_types.get(node_type, 0) + 1
+            
+            # For entity nodes, get entity_type breakdown
+            if node_type == 'entity':
+                entity_type = getattr(node_attrs['data'], 'entity_type', 'Unknown')
+                
+                # Fallback: if entity_type is empty, check entities dictionary
+                if not entity_type:
+                    node_id = node_attrs['data'].id if hasattr(node_attrs['data'], 'id') else None
+                    if node_id and node_id in knowledge_graph.entities:
+                        entity_types = knowledge_graph.entities[node_id].get('type', [])
+                        entity_type = entity_types[0] if entity_types else 'Unknown'
+                
+                entity_breakdown[entity_type] = entity_breakdown.get(entity_type, 0) + 1
 
+        # Count edge relations
         edge_relations = {}
         for _, _, attrs in g.edges(data=True):
             relation = attrs.get('relation', 'Unknown')
             edge_relations[relation] = edge_relations.get(relation, 0) + 1
 
+        # Build result
         result = f"""Knowledge Graph Statistics:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Total Nodes: {num_nodes}
-Total Edges: {num_edges}
+📊 Overview:
+  Total Nodes: {num_nodes:,}
+  Total Edges: {num_edges:,}
 
-Node Types:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📦 Node Types:
 """
+        
+        # Sort node types by count
         for ntype, count in sorted(node_types.items(), key=lambda x: x[1], reverse=True):
-            result += f"  - {ntype}: {count}\n"
+            result += f"  • {ntype}: {count:,}\n"
+            
+            # If this is entity type, show breakdown
+            if ntype == 'entity' and entity_breakdown:
+                result += f"    └─ Entity Breakdown:\n"
+                for etype, ecount in sorted(entity_breakdown.items(), key=lambda x: x[1], reverse=True):
+                    percentage = (ecount / count * 100) if count > 0 else 0
+                    result += f"       ├─ {etype}: {ecount:,} ({percentage:.1f}%)\n"
 
-        result += "\nEdge Relations:\n"
+        result += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔗 Edge Relations:
+"""
         for relation, count in sorted(edge_relations.items(), key=lambda x: x[1], reverse=True):
-            result += f"  - {relation}: {count}\n"
+            result += f"  • {relation}: {count:,}\n"
+
+        # Add explanation section
+        result += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ℹ️  Definitions:
+
+Chunks: Code segments representing logical portions of files. Each chunk
+        contains a section of code (like a function, class, or code block)
+        along with metadata about what entities it declares and calls.
+
+Entities: Programming constructs identified in the code including:
+          - Classes: Class definitions
+          - Functions: Function definitions
+          - Methods: Class method definitions
+          - Variables: Variable declarations
+          - Parameters: Function/method parameters
+          - Function_call/Method_call: Usage references
+
+Files: Source code files in the repository
+Directories: Folder structure containing files
+Repo: Root repository node
+
+Edge Relations:
+  - contains: Parent-child relationships (file contains chunks)
+  - declares: Entity declaration relationships
+  - calls: Entity usage/invocation relationships
+"""
 
         return result
     except Exception as e:
         return f"Error: {str(e)}"
 
-
 @observe(as_type="tool")
-def list_nodes_by_type(node_type: str, limit: int = 20) -> str:
+def list_nodes_by_type(node_type: str, limit: int = 20, page: int = 1) -> str:
     """
     List nodes of a specific type in the knowledge graph.
-
+    
+    For entities, use entity_type (e.g., 'class', 'function', 'method').
+    For other nodes, use node_type (e.g., 'file', 'chunk', 'directory').
+    
     Args:
         node_type: The type of nodes to list (e.g., 'function', 'class', 'file')
         limit: Maximum number of nodes to return (default: 20)
-
+        page: Page number for pagination (default: 1)
     Returns:
         str: A formatted string with matching nodes
     """
     if knowledge_graph is None:
         return "Error: Knowledge graph not initialized"
-
+    
     try:
-        # Convert limit to int if it's a string (MCP may pass strings)
+        # Convert limit/page to int if they're strings (MCP/Gradio may pass strings)
         if isinstance(limit, str):
             try:
                 limit = int(limit)
             except ValueError:
                 return f"Error: 'limit' must be an integer, got '{limit}'"
         
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+        
+        if limit <= 0:
+            return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
+        
         g = knowledge_graph.graph
-        matching_nodes = [
-            {
-                "id": node_id,
-                "name": getattr(data['data'], 'name', 'Unknown')
-            }
-            for node_id, data in g.nodes(data=True)
-            if getattr(data['data'], 'node_type', None) == node_type
-        ][:limit]
-
-        if not matching_nodes:
+        matching_nodes = []
+        
+        for node_id, data in g.nodes(data=True):
+            node = data['data']
+            current_node_type = getattr(node, 'node_type', None)
+            node_name = getattr(node, 'name', 'Unknown')
+            
+            # For entity nodes, check entity_type instead of node_type
+            if current_node_type == 'entity':
+                entity_type = getattr(node, 'entity_type', '')
+                
+                # Fallback: if entity_type is empty, check the entities dictionary
+                if not entity_type and node_id in knowledge_graph.entities:
+                    entity_types = knowledge_graph.entities[node_id].get('type', [])
+                    entity_type = entity_types[0] if entity_types else ''
+                
+                if entity_type and entity_type.lower() == node_type.lower():
+                    matching_nodes.append({
+                        "id": node_id,
+                        "name": node_name,
+                        "type": f"entity ({entity_type})"
+                    })
+            # For other nodes, check node_type directly
+            elif current_node_type == node_type:
+                matching_nodes.append({
+                    "id": node_id,
+                    "name": node_name,
+                    "type": current_node_type
+                })
+        
+        # Sort by name for consistent ordering
+        matching_nodes.sort(key=lambda x: x['name'].lower())
+        
+        total = len(matching_nodes)
+        if total == 0:
             return f"No nodes found of type '{node_type}'."
-
-        result = f"Nodes of type '{node_type}' ({len(matching_nodes)} results):\n"
+        
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} nodes at {limit} per page)"
+        
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = matching_nodes[start_idx:end_idx]
+        
+        result = f"Nodes of type '{node_type}' (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-        for i, node in enumerate(matching_nodes, 1):
+        
+        for i, node in enumerate(page_slice, start=start_idx + 1):
             result += f"{i}. {node['name']}\n"
-            result += f"   ID: {node['id']}\n\n"
-
+            result += f"   ID: {node['id']}\n"
+            result += f"   Type: {node['type']}\n\n"
+        
+        # Pagination hint
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
+        
         return result
     except Exception as e:
         return f"Error: {str(e)}"
 
 
 @observe(as_type="tool")
-def get_neighbors(node_id: str) -> str:
+def get_neighbors(node_id: str, limit: int = 20, page: int = 1) -> str:
     """
-    Get all nodes directly connected to a given node.
+    Retrieves all nodes directly connected to a given node.
 
-    Shows neighboring nodes with their relationship types.
+    Retrieves neighboring nodes with their relationship types.
 
     Args:
         node_id: The ID of the node whose neighbors to retrieve
@@ -399,14 +554,42 @@ def get_neighbors(node_id: str) -> str:
         if node_id not in knowledge_graph.graph:
             return f"Error: Node '{node_id}' not found in knowledge graph"
 
+        # Convert limit/page to int if they're strings
+        if isinstance(limit, str):
+            try:
+                limit = int(limit)
+            except ValueError:
+                return f"Error: 'limit' must be an integer, got '{limit}'"
+
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+
+        if limit <= 0:
+            return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
+
         neighbors = knowledge_graph.get_neighbors(node_id)
         if not neighbors:
             return f"No neighbors found for node '{node_id}'"
 
-        result = f"Neighbors of '{node_id}' ({len(neighbors)} total):\n"
+        total = len(neighbors)
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} neighbors at {limit} per page)"
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = neighbors[start_idx:end_idx]
+
+        result = f"Neighbors of '{node_id}' (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, neighbor in enumerate(neighbors[:20], 1):
+        for i, neighbor in enumerate(page_slice, start=start_idx + 1):
             result += f"{i}. {neighbor.id}\n"
             result += f"   Name: {getattr(neighbor, 'name', 'Unknown')}\n"
             result += f"   Type: {neighbor.node_type}\n"
@@ -419,8 +602,9 @@ def get_neighbors(node_id: str) -> str:
                 result += f"   ← Relation: {edge_data.get('relation', 'Unknown')}\n"
             result += "\n"
 
-        if len(neighbors) > 20:
-            result += f"... and {len(neighbors) - 20} more neighbors\n"
+        # Pagination hint
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
 
         return result
     except Exception as e:
@@ -430,12 +614,12 @@ def get_neighbors(node_id: str) -> str:
 @observe(as_type="tool")
 def go_to_definition(entity_name: str) -> str:
     """
-    Find where an entity is declared or defined in the codebase.
+    Retrieve chunk node(s) where entity is declared or defined in the codebase.
 
-    Locates the declaration point for functions, classes, variables, etc.
+    Locates and retrieves the declaration point for functions, classes, variables, etc.
 
     Args:
-        entity_name: The name of the entity to find the definition for
+        entity_name: The name of the entity to retrieve the definition for
 
     Returns:
         str: A formatted string with definition locations
@@ -477,15 +661,16 @@ def go_to_definition(entity_name: str) -> str:
 
 
 @observe(as_type="tool")
-def find_usages(entity_name: str, limit: int = 20) -> str:
+def find_usages(entity_name: str, limit: int = 20, page: int = 1) -> str:
     """
-    Find all usages or calls of an entity in the codebase.
+    Retrieve all usages or calls of an entity in the codebase.
 
     Shows where functions, classes, variables, etc. are used.
 
     Args:
-        entity_name: The name of the entity to find usages for
-        limit: Maximum number of usages to return (default: 20)
+        entity_name: The name of the entity to retrieve usages for
+        limit: Maximum number of usages to return per page (default: 20)
+        page: Page number for pagination, 1-indexed (default: 1)
 
     Returns:
         str: A formatted string with usage locations
@@ -501,11 +686,20 @@ def find_usages(entity_name: str, limit: int = 20) -> str:
             except ValueError:
                 return f"Error: 'limit' must be an integer, got '{limit}'"
         
+        # Convert page to int if it's a string
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+        
         if entity_name not in knowledge_graph.entities:
             return f"Error: Entity '{entity_name}' not found in knowledge graph"
 
         if limit <= 0:
             return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
 
         entity_info = knowledge_graph.entities[entity_name]
         calling_chunks = entity_info.get('calling_chunk_ids', [])
@@ -513,17 +707,28 @@ def find_usages(entity_name: str, limit: int = 20) -> str:
         if not calling_chunks:
             return f"Entity '{entity_name}' found but no usages identified."
 
-        result = f"Usages of '{entity_name}' ({len(calling_chunks)} total):\n"
+        total = len(calling_chunks)
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} usages at {limit} per page)"
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = calling_chunks[start_idx:end_idx]
+
+        result = f"Usages of '{entity_name}' (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, chunk_id in enumerate(calling_chunks[:limit], 1):
+        for i, chunk_id in enumerate(page_slice, start=start_idx + 1):
             if chunk_id in knowledge_graph.graph:
                 chunk = knowledge_graph.graph.nodes[chunk_id]['data']
                 result += f"{i}. {chunk.path} (chunk {chunk.order_in_file})\n"
                 result += f"   Content:\n{chunk.content}\n\n"
 
-        if len(calling_chunks) > limit:
-            result += f"... and {len(calling_chunks) - limit} more usages\n"
+        # Pagination hint
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
 
         return result
     except Exception as e:
@@ -585,15 +790,17 @@ def get_file_structure(file_path: str) -> str:
 
 
 @observe(as_type="tool")
-def get_related_chunks(chunk_id: str, relation_type: str = "calls") -> str:
+def get_related_chunks(chunk_id: str, relation_type: str = "calls", limit: int = 20, page: int = 1) -> str:
     """
-    Get chunks related to a given chunk by a specific relationship.
+    Retrieve chunks related to a given chunk by a specific relationship.
 
-    Find chunks connected via relationships like 'calls', 'contains', etc.
+    Retrieve chunks connected via relationships like 'calls', 'contains', etc.
 
     Args:
-        chunk_id: The ID of the chunk to find related chunks for
+        chunk_id: The ID of the chunk to retrieve related chunks for
         relation_type: The type of relationship to filter by (default: 'calls')
+        limit: Maximum number of results per page (default: 20)
+        page: Page number for pagination, 1-indexed (default: 1)
 
     Returns:
         str: A formatted string with related chunks
@@ -605,31 +812,70 @@ def get_related_chunks(chunk_id: str, relation_type: str = "calls") -> str:
         if chunk_id not in knowledge_graph.graph:
             return f"Error: Chunk '{chunk_id}' not found in knowledge graph"
 
+        # Convert limit/page to int if they're strings
+        if isinstance(limit, str):
+            try:
+                limit = int(limit)
+            except ValueError:
+                return f"Error: 'limit' must be an integer, got '{limit}'"
+
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+
+        if limit <= 0:
+            return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
+
         related = []
-        for _, target, attrs in knowledge_graph.graph.out_edges(chunk_id, data=True):
-            if attrs.get('relation') == relation_type:
+        if relation_type == "" or relation_type == "all":
+            # Get all outgoing edges regardless of relation type
+            for _, target, attrs in knowledge_graph.graph.out_edges(chunk_id, data=True):
                 target_node = knowledge_graph.graph.nodes[target]['data']
                 related.append({
                     "id": target,
                     "file_path": getattr(target_node, 'path', 'Unknown'),
                     "entity_name": attrs.get('entity_name')
                 })
+        else:     
+            for _, target, attrs in knowledge_graph.graph.out_edges(chunk_id, data=True):
+                if attrs.get('relation') == relation_type:
+                    target_node = knowledge_graph.graph.nodes[target]['data']
+                    related.append({
+                        "id": target,
+                        "file_path": getattr(target_node, 'path', 'Unknown'),
+                        "entity_name": attrs.get('entity_name')
+                    })
 
         if not related:
             return f"No chunks found with '{relation_type}' relationship from '{chunk_id}'"
 
-        result = f"Chunks related to '{chunk_id}' via '{relation_type}' ({len(related)} total):\n"
+        total = len(related)
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} results at {limit} per page)"
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = related[start_idx:end_idx]
+
+        result = f"Chunks related to '{chunk_id}' via '{relation_type}' (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, chunk in enumerate(related[:15], 1):
+        for i, chunk in enumerate(page_slice, start=start_idx + 1):
             result += f"{i}. {chunk['id']}\n"
             result += f"   File: {chunk['file_path']}\n"
             if chunk['entity_name']:
                 result += f"   Entity: {chunk['entity_name']}\n"
             result += "\n"
 
-        if len(related) > 15:
-            result += f"... and {len(related) - 15} more\n"
+        # Pagination hint
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
 
         return result
     except Exception as e:
@@ -641,7 +887,8 @@ def list_all_entities(
     limit: int = 50,
     page: int = 1,
     entity_type: Optional[str] = None,
-    declared_in_repo: Optional[bool] = None
+    declared_in_repo: Optional[bool] = None,
+    called_in_repo: Optional[bool] = None
 ) -> str:
     """
     List all entities tracked in the knowledge graph with filtering and pagination options.
@@ -653,6 +900,7 @@ def list_all_entities(
         page: Page number for pagination, 1-indexed (default: 1)
         entity_type: Filter by entity type ('class', 'function', 'method', 'variable', 'parameter', 'function_call', 'method_call')
         declared_in_repo: If True, only return entities with declarations. If False, only entities without declarations. If None, return all.
+        called_in_repo: If True, only return entities that have usages/calls in the repo. If False, only entities without usages. If None, return all.
 
     Returns:
         str: A formatted string with all entities for the requested page
@@ -690,6 +938,15 @@ def list_all_entities(
                 declared_in_repo = False
             elif declared_in_repo.lower() in ("none", "null", "all", ""):
                 declared_in_repo = None
+
+        # Handle called_in_repo - convert string to bool if needed
+        if isinstance(called_in_repo, str):
+            if called_in_repo.lower() in ("true", "1", "yes"):
+                called_in_repo = True
+            elif called_in_repo.lower() in ("false", "0", "no"):
+                called_in_repo = False
+            elif called_in_repo.lower() in ("none", "null", "all", ""):
+                called_in_repo = None
         
         if not knowledge_graph.entities:
             return "No entities found in the knowledge graph."
@@ -711,6 +968,14 @@ def list_all_entities(
                 if not declared_in_repo and has_declaration:
                     continue
 
+            # Filter by called_in_repo (usages) if specified
+            if called_in_repo is not None:
+                has_calls = len(info.get('calling_chunk_ids', [])) > 0
+                if called_in_repo and not has_calls:
+                    continue
+                if not called_in_repo and has_calls:
+                    continue
+
             filtered_entities[entity_name] = info
 
         # Build the response with filtered entities
@@ -720,6 +985,8 @@ def list_all_entities(
                 filter_desc.append(f"type={entity_type}")
             if declared_in_repo is not None:
                 filter_desc.append(f"declared_in_repo={declared_in_repo}")
+            if called_in_repo is not None:
+                filter_desc.append(f"called_in_repo={called_in_repo}")
             filter_text = f" (filtered by {', '.join(filter_desc)})" if filter_desc else ""
             return f"No entities found{filter_text}."
 
@@ -759,6 +1026,8 @@ def list_all_entities(
             result += f"\n(Filtered by type={entity_type})\n"
         if declared_in_repo is not None:
             result += f"(Filtered by declared_in_repo={declared_in_repo})\n"
+        if called_in_repo is not None:
+            result += f"(Filtered by called_in_repo={called_in_repo})\n"
 
         return result
     except Exception as e:
@@ -924,11 +1193,11 @@ def entity_relationships(node_id: str) -> str:
 
 
 @observe(as_type="tool")
-def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fuzzy: bool = True) -> str:
+def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, page: int = 1, partial_allowed: bool = True) -> str:
     """
-    Search for nodes/entities by type and name substring with fuzzy matching support.
+    Search for nodes/entities by type and name substring with partial matching support.
 
-    Filters nodes by type and searches for matching names. Supports partial/fuzzy matching
+    Filters nodes by type and searches for matching names. Supports partial matching
     so searching for 'Embedding' will find 'BertEmbeddings', 'LlamaRotaryEmbedding', etc.
     
     For entities, searches by entity_type (e.g., 'class', 'function', 'method').
@@ -938,7 +1207,7 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fu
         node_type: Type of node/entity (e.g., 'function', 'class', 'file', 'chunk', 'directory')
         name_query: Substring to match in the name (case-insensitive, supports partial matches)
         limit: Maximum results to return (default: 10)
-        fuzzy: Enable fuzzy/partial matching (default: True). If False, requires exact substring match.
+        partial_allowed: Enable partial matching (default: True). If False, requires exact substring match.
 
     Returns:
         str: A formatted string with matching nodes
@@ -947,31 +1216,39 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fu
         return "Error: Knowledge graph not initialized"
 
     try:
-        # Convert limit to int if it's a string (MCP may pass strings)
+        # Convert limit/page to int if they're strings (MCP/Gradio may pass strings)
         if isinstance(limit, str):
             try:
                 limit = int(limit)
             except ValueError:
                 return f"Error: 'limit' must be an integer, got '{limit}'"
-        
-        # Convert fuzzy to bool if it's a string
-        if isinstance(fuzzy, str):
-            fuzzy = fuzzy.lower() in ('true', '1', 'yes')
-        
+
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+
+        # Convert partial_allowed to bool if it's a string
+        if isinstance(partial_allowed, str):
+            partial_allowed = partial_allowed.lower() in ('true', '1', 'yes')
+
         if limit <= 0:
             return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
 
         g = knowledge_graph.graph
         matches = []
         query_lower = name_query.lower()
         
-        # Build regex pattern for fuzzy matching
+        # Build regex pattern for partial_allowed matching
         # This will match names containing all characters of the query in order
-        if fuzzy:
+        if partial_allowed:
             # Create pattern that matches query as substring or with characters spread out
             # e.g., "Embed" matches "Embedding", "BertEmbeddings", "EmbedLayer"
-            fuzzy_pattern = '.*'.join(re.escape(c) for c in query_lower)
-            fuzzy_regex = re.compile(fuzzy_pattern, re.IGNORECASE)
+            partial_pattern = '.*'.join(re.escape(c) for c in query_lower)
+            partial_regex = re.compile(partial_pattern, re.IGNORECASE)
         
         for nid, n in g.nodes(data=True):
             node = n['data']
@@ -982,9 +1259,9 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fu
             
             # Check if name matches the query
             name_matches = False
-            if fuzzy:
-                # Fuzzy match: substring match OR regex pattern match
-                if query_lower in node_name.lower() or fuzzy_regex.search(node_name):
+            if partial_allowed:
+                # Partial match: substring match OR regex pattern match
+                if query_lower in node_name.lower() or partial_regex.search(node_name):
                     name_matches = True
             else:
                 # Exact substring match
@@ -1026,20 +1303,32 @@ def search_by_type_and_name(node_type: str, name_query: str, limit: int = 10, fu
                     "score": score
                 })
         
-        # Sort by match score (best matches first) and limit results
+        # Sort by match score (best matches first)
         matches.sort(key=lambda x: (x['score'], x['name'].lower()))
-        matches = matches[:limit]
 
-        if not matches:
+        total = len(matches)
+        if total == 0:
             return f"No matches for type '{node_type}' and name containing '{name_query}'."
 
-        result = f"Matches for type '{node_type}' and name '{name_query}' ({len(matches)} results):\n"
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} results at {limit} per page)"
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = matches[start_idx:end_idx]
+
+        result = f"Matches for type '{node_type}' and name '{name_query}' (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, match in enumerate(matches, 1):
+        for i, match in enumerate(page_slice, start=start_idx + 1):
             result += f"{i}. {match['name']}\n"
             result += f"   ID: {match['id']}\n"
             result += f"   Type: {match['type']}\n\n"
+
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
 
         return result
     except Exception as e:
@@ -1060,9 +1349,7 @@ def get_chunk_context(node_id: str) -> str:
     Returns:
         str: The full content of surrounding code chunks
     """
-    from pedagogia_graph_code_repo.RepoKnowledgeGraphLib.utils.chunk_utils import (
-        organize_chunks_by_file_name, join_organized_chunks
-    )
+
     
     if knowledge_graph is None:
         return "Error: Knowledge graph not initialized"
@@ -1157,9 +1444,9 @@ def get_file_stats(path: str) -> str:
 @observe(as_type="tool")
 def find_path(source_id: str, target_id: str, max_depth: int = 5) -> str:
     """
-    Find the shortest path between two nodes in the knowledge graph.
+    Retrieve the shortest path between two nodes in the knowledge graph.
 
-    Uses graph traversal to find connections between nodes.
+    Uses graph traversal to retrieve connections between nodes.
 
     Args:
         source_id: The ID of the source node
@@ -1206,13 +1493,13 @@ def find_path(source_id: str, target_id: str, max_depth: int = 5) -> str:
 @observe(as_type="tool")
 def get_subgraph(node_id: str, depth: int = 2, edge_types: Optional[str] = None) -> str:
     """
-    Extract a subgraph around a node up to a specified depth.
+    Retrieve a subgraph around a node up to a specified depth.
 
     Optionally filters by edge types (comma-separated).
 
     Args:
         node_id: The ID of the central node
-        depth: The depth/radius of the subgraph to extract (default: 2)
+        depth: The depth/radius of the subgraph to Retrieve (default: 2)
         edge_types: Optional comma-separated list of edge types (e.g., 'calls,contains')
 
     Returns:
@@ -1256,7 +1543,7 @@ def get_subgraph(node_id: str, depth: int = 2, edge_types: Optional[str] = None)
 
 
 @observe(as_type="tool")
-def list_files_in_directory(directory_path: str = "", pattern: str = "*", recursive: bool = True, limit: int = 50) -> str:
+def list_files_in_directory(directory_path: str = "", pattern: str = "*", recursive: bool = True, limit: int = 50, page: int = 1) -> str:
     """
     List files in a directory with optional glob pattern matching.
 
@@ -1267,7 +1554,8 @@ def list_files_in_directory(directory_path: str = "", pattern: str = "*", recurs
         directory_path: Path to the directory to list (empty string for root/all files)
         pattern: Glob pattern to filter files (e.g., '*.py', 'test_*.py', '**/*.js')
         recursive: Whether to search recursively in subdirectories (default: True)
-        limit: Maximum number of files to return (default: 50)
+        limit: Maximum number of files to return per page (default: 50)
+        page: Page number for pagination, 1-indexed (default: 1)
 
     Returns:
         str: A formatted string with matching files
@@ -1282,6 +1570,18 @@ def list_files_in_directory(directory_path: str = "", pattern: str = "*", recurs
                 limit = int(limit)
             except ValueError:
                 return f"Error: 'limit' must be an integer, got '{limit}'"
+        
+        # Convert page to int if it's a string
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+        
+        if limit <= 0:
+            return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
         
         # Convert recursive to bool if it's a string
         if isinstance(recursive, str):
@@ -1330,9 +1630,6 @@ def list_files_in_directory(directory_path: str = "", pattern: str = "*", recurs
                 'language': language,
                 'entity_count': len(declared_entities)
             })
-            
-            if len(matching_files) >= limit:
-                break
         
         # Sort by path for consistent ordering
         matching_files.sort(key=lambda x: x['path'])
@@ -1342,118 +1639,31 @@ def list_files_in_directory(directory_path: str = "", pattern: str = "*", recurs
             pattern_desc = f" matching '{pattern}'" if pattern and pattern != '*' else ""
             return f"No files found{filter_desc}{pattern_desc}."
 
+        total = len(matching_files)
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} files at {limit} per page)"
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = matching_files[start_idx:end_idx]
+
         result = f"Files"
         if directory_path:
             result += f" in '{directory_path}'"
         if pattern and pattern != '*':
             result += f" matching '{pattern}'"
-        result += f" ({len(matching_files)} results):\n"
+        result += f" (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, f in enumerate(matching_files, 1):
+        for i, f in enumerate(page_slice, start=start_idx + 1):
             result += f"{i}. {f['path']}\n"
             result += f"   Language: {f['language']}, Entities: {f['entity_count']}\n\n"
 
-        return result
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-
-@observe(as_type="tool")
-def find_classes_inheriting_from(base_class_name: str, limit: int = 20) -> str:
-    """
-    Find all classes that inherit from a given base class.
-
-    Searches the knowledge graph for class entities that have the specified
-    base class in their inheritance chain.
-
-    Args:
-        base_class_name: The name of the base class to find subclasses of
-        limit: Maximum number of results to return (default: 20)
-
-    Returns:
-        str: A formatted string with classes inheriting from the base class
-    """
-    if knowledge_graph is None:
-        return "Error: Knowledge graph not initialized"
-
-    try:
-        # Convert limit to int if it's a string
-        if isinstance(limit, str):
-            try:
-                limit = int(limit)
-            except ValueError:
-                return f"Error: 'limit' must be an integer, got '{limit}'"
-
-        g = knowledge_graph.graph
-        inheriting_classes = []
-        base_lower = base_class_name.lower()
-        
-        # First, find all class entities
-        for nid, n in g.nodes(data=True):
-            node = n['data']
-            node_type = getattr(node, 'node_type', None)
-            entity_type = getattr(node, 'entity_type', '')
-            
-            if node_type != 'entity' or entity_type.lower() != 'class':
-                continue
-            
-            class_name = getattr(node, 'name', '')
-            
-            # Check if this class has relationships indicating inheritance
-            # Look for 'inherits', 'extends', or similar relationships
-            for _, target, edge_data in g.out_edges(nid, data=True):
-                relation = edge_data.get('relation', '').lower()
-                target_node = g.nodes[target]['data']
-                target_name = getattr(target_node, 'name', '')
-                
-                if relation in ('inherits', 'extends', 'inherits_from', 'base_class'):
-                    if target_name.lower() == base_lower or base_lower in target_name.lower():
-                        declaring_chunks = getattr(node, 'declaring_chunk_ids', [])
-                        inheriting_classes.append({
-                            'name': class_name,
-                            'id': nid,
-                            'base': target_name,
-                            'file': declaring_chunks[0] if declaring_chunks else 'Unknown'
-                        })
-                        break
-            
-            # Also check called_entities for base class references
-            # (Sometimes inheritance is tracked via calls relationship)
-            called = getattr(node, 'called_entities', [])
-            if any(base_lower in str(c).lower() for c in called):
-                # Check if it's likely an inheritance pattern
-                declaring_chunks = getattr(node, 'declaring_chunk_ids', [])
-                if declaring_chunks:
-                    chunk_id = declaring_chunks[0]
-                    if chunk_id in g:
-                        chunk_node = g.nodes[chunk_id]['data']
-                        content = getattr(chunk_node, 'content', '')
-                        # Look for class definition with inheritance pattern
-                        class_pattern = rf'class\s+{re.escape(class_name)}\s*\([^)]*{re.escape(base_class_name)}'
-                        if re.search(class_pattern, content, re.IGNORECASE):
-                            if not any(c['name'] == class_name for c in inheriting_classes):
-                                inheriting_classes.append({
-                                    'name': class_name,
-                                    'id': nid,
-                                    'base': base_class_name,
-                                    'file': chunk_id
-                                })
-            
-            if len(inheriting_classes) >= limit:
-                break
-
-        if not inheriting_classes:
-            return f"No classes found inheriting from '{base_class_name}'.\n\nTip: Try searching for the base class name in code content using search_nodes."
-
-        result = f"Classes inheriting from '{base_class_name}' ({len(inheriting_classes)} results):\n"
-        result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-        for i, cls in enumerate(inheriting_classes, 1):
-            result += f"{i}. {cls['name']}\n"
-            result += f"   ID: {cls['id']}\n"
-            result += f"   Inherits from: {cls['base']}\n"
-            result += f"   Defined in: {cls['file']}\n\n"
+        # Pagination hint
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
 
         return result
     except Exception as e:
@@ -1461,15 +1671,16 @@ def find_classes_inheriting_from(base_class_name: str, limit: int = 20) -> str:
 
 
 @observe(as_type="tool")
-def find_files_importing(module_or_entity: str, limit: int = 30) -> str:
+def find_files_importing(module_or_entity: str, limit: int = 30, page: int = 1) -> str:
     """
-    Find all files that import a specific module or entity.
+    Retrieve all files that import a specific module or entity.
 
     Searches for import statements and usage patterns across the codebase.
 
     Args:
-        module_or_entity: The name of the module or entity to find imports of
-        limit: Maximum number of results to return (default: 30)
+        module_or_entity: The name of the module or entity to retrieve imports of
+        limit: Maximum number of results to return per page (default: 30)
+        page: Page number for pagination, 1-indexed (default: 1)
 
     Returns:
         str: A formatted string with files that import the specified module/entity
@@ -1484,6 +1695,18 @@ def find_files_importing(module_or_entity: str, limit: int = 30) -> str:
                 limit = int(limit)
             except ValueError:
                 return f"Error: 'limit' must be an integer, got '{limit}'"
+        
+        # Convert page to int if it's a string
+        if isinstance(page, str):
+            try:
+                page = int(page)
+            except ValueError:
+                return f"Error: 'page' must be an integer, got '{page}'"
+        
+        if limit <= 0:
+            return "Error: limit must be a positive integer"
+        if page < 1:
+            return "Error: 'page' must be a positive integer (1 or greater)"
 
         g = knowledge_graph.graph
         importing_files = []
@@ -1539,9 +1762,6 @@ def find_files_importing(module_or_entity: str, limit: int = 30) -> str:
                                 'match_type': 'import_statement'
                             })
                         break
-            
-            if len(importing_files) >= limit:
-                break
         
         # Sort by path
         importing_files.sort(key=lambda x: x['path'])
@@ -1549,15 +1769,29 @@ def find_files_importing(module_or_entity: str, limit: int = 30) -> str:
         if not importing_files:
             return f"No files found importing '{module_or_entity}'.\n\nTip: Try searching for the module name in code content using search_nodes."
 
-        result = f"Files importing '{module_or_entity}' ({len(importing_files)} results):\n"
+        total = len(importing_files)
+        # Pagination
+        total_pages = (total + limit - 1) // limit
+        if page > total_pages:
+            return f"Error: Page {page} does not exist. Total pages: {total_pages} (with {total} files at {limit} per page)"
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        page_slice = importing_files[start_idx:end_idx]
+
+        result = f"Files importing '{module_or_entity}' (Page {page}/{total_pages}, {total} total):\n"
         result += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        for i, f in enumerate(importing_files, 1):
+        for i, f in enumerate(page_slice, start=start_idx + 1):
             result += f"{i}. {f['path']}\n"
             result += f"   Match type: {f['match_type']}\n"
             if f['matched_entities']:
                 result += f"   Matched: {', '.join(f['matched_entities'][:3])}\n"
             result += "\n"
+
+        # Pagination hint
+        if page < total_pages:
+            result += f"Use page={page + 1} to see the next page\n"
 
         return result
     except Exception as e:
@@ -1703,6 +1937,57 @@ def get_concept_overview(concept: str, limit: int = 15) -> str:
         return result
     except Exception as e:
         return f"Error: {str(e)}"
+    
+def _get_header_explorer():
+    html = """
+    <style>
+        .kge-header-container {
+            background: linear-gradient(314deg, #64748b 0%, #373f4a 100%);
+            padding: 28px 22px;
+            border-radius: 16px;
+            color: white !important;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+                        0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            margin-bottom: 25px;
+            font-family: 'Inter', -apple-system, sans-serif;
+            text-align: center;
+        }
+
+        .kge-header-title {
+            font-size: 30px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .kge-header-subtitle {
+            font-size: 17px;
+            font-weight: 400;
+            margin-bottom: 6px;
+        }
+
+        .kge-header-link a {
+            color: #d7e8ff;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .kge-header-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+
+    <div class="kge-header-container">
+        <div class="kge-header-title">Transformers Knowledge Graph Explorer</div>
+        <div class="kge-header-subtitle">
+            Explore, query, and understand the structure of the Hugging Face Transformers codebase.
+        </div>
+        <div class="kge-header-link">
+            <a href="https://www.epita.fr/" target="_blank">EPITA Website</a>
+        </div>
+    </div>
+    """
+    return html
+
 
 
 # ==================== Gradio App ====================
@@ -1710,8 +1995,9 @@ def get_concept_overview(concept: str, limit: int = 15) -> str:
 def create_gradio_app():
     """Create and configure the Gradio interface."""
 
-    with gr.Blocks(title="Transformers Knowledge Graph Explorer — Knowledge Graph MCP Server", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="Code Knowledge Graph Explorer — 🤗 Transformers Library — Knowledge Graph MCP Server", theme=gr.themes.Soft()) as demo:
         # Helper to render tool docstrings in the UI
+        gr.HTML(_get_header_explorer())
         def _tool_doc_md(func):
             doc = (func.__doc__ or "No description available.").strip()
             # Render as a fenced code block for readability
@@ -1720,7 +2006,7 @@ def create_gradio_app():
         gr.Markdown("""
         # 🔍 Transformers Knowledge Graph Explorer
 
-        Explore and query the Hugging Face Transformers library codebase using a knowledge graph.
+        Understanding large codebases is essential for software engineers. This Space presents a Code Knowledge Graph MCP Server built around the Hugging Face Transformers library (4,000+ files, 400k+ lines of code). It enables LLM-based coding agents to analyze code structure, follow dependencies, and spot potential improvements. Developed initially for EPITA coding courses, these capabilities make it easier to review, navigate, and understand complex projects such as the Transformers library.
         """)
 
         with gr.Tab("📊 Graph Overview"):
@@ -1733,11 +2019,12 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     search_query = gr.Textbox(label="Search Query", placeholder="Enter search query...")
-                    search_limit = gr.Slider(1, 50, value=10, step=1, label="Max Results")
+                    search_limit = gr.Slider(1, 50, value=10, step=1, label="Results per Page")
+                    search_page = gr.Slider(1, 100, value=1, step=1, label="Page")
                     search_btn = gr.Button("Search", variant="primary")
                 with gr.Column():
                     search_output = gr.Textbox(label="Search Results", lines=20, max_lines=30)
-            search_btn.click(fn=search_nodes, inputs=[search_query, search_limit], outputs=search_output)
+            search_btn.click(fn=search_nodes, inputs=[search_query, search_limit, search_page], outputs=search_output)
             gr.Markdown(_tool_doc_md(search_nodes))
 
         with gr.Tab("📝 Node Info"):
@@ -1749,8 +2036,8 @@ def create_gradio_app():
                 with gr.Column():
                     node_output = gr.Textbox(label="Node Information", lines=20, max_lines=30)
             node_info_btn.click(fn=get_node_info, inputs=node_id_input, outputs=node_output)
-            node_edges_btn.click(fn=get_node_edges, inputs=node_id_input, outputs=node_output)
             gr.Markdown(_tool_doc_md(get_node_info))
+            node_edges_btn.click(fn=get_node_edges, inputs=node_id_input, outputs=node_output)
             gr.Markdown(_tool_doc_md(get_node_edges))
 
         with gr.Tab("🏗️ Structure"):
@@ -1791,12 +2078,17 @@ def create_gradio_app():
                         label="Declared in Repo (optional)",
                         value=""
                     )
+                    called_in_repo = gr.Dropdown(
+                        choices=["", "true", "false"],
+                        label="Called in Repo (optional)",
+                        value=""
+                    )
                     list_entities_btn = gr.Button("List Entities", variant="primary")
                 with gr.Column():
                     list_entities_output = gr.Textbox(label="Entities", lines=20, max_lines=30)
             list_entities_btn.click(
                 fn=list_all_entities,
-                inputs=[entity_limit, entity_page, entity_type_filter, declared_in_repo],
+                inputs=[entity_limit, entity_page, entity_type_filter, declared_in_repo, called_in_repo],
                 outputs=list_entities_output,
             )
             gr.Markdown(_tool_doc_md(list_all_entities))
@@ -1817,11 +2109,12 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     entity_name_usage = gr.Textbox(label="Entity Name", placeholder="Enter entity name...")
-                    usage_limit = gr.Slider(1, 50, value=20, step=1, label="Max Results")
+                    usage_limit = gr.Slider(1, 50, value=20, step=1, label="Results per Page")
+                    usage_page = gr.Slider(1, 100, value=1, step=1, label="Page")
                     usage_btn = gr.Button("Find Usages", variant="primary")
                 with gr.Column():
                     usage_output = gr.Textbox(label="Usages", lines=15, max_lines=25)
-            usage_btn.click(fn=find_usages, inputs=[entity_name_usage, usage_limit], outputs=usage_output)
+            usage_btn.click(fn=find_usages, inputs=[entity_name_usage, usage_limit, usage_page], outputs=usage_output)
             gr.Markdown(_tool_doc_md(find_usages))
 
         with gr.Tab("🔬 Discovery"):
@@ -1829,14 +2122,15 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     node_type_input = gr.Dropdown(
-                        choices=["file", "directory", "chunk", "entity", "function", "class", "method"],
+                        choices=["file", "directory", "chunk", "function", "class", "method"],
                         label="Node Type"
                     )
                     type_limit = gr.Slider(1, 100, value=20, step=1, label="Max Results")
+                    type_page = gr.Slider(1, 100, value=1, step=1, label="Page")
                     type_btn = gr.Button("List Nodes", variant="primary")
                 with gr.Column():
                     type_output = gr.Textbox(label="Results", lines=20, max_lines=30)
-            type_btn.click(fn=list_nodes_by_type, inputs=[node_type_input, type_limit], outputs=type_output)
+            type_btn.click(fn=list_nodes_by_type, inputs=[node_type_input, type_limit, type_page], outputs=type_output)
             gr.Markdown(_tool_doc_md(list_nodes_by_type))
 
             gr.Markdown("---")
@@ -1844,14 +2138,17 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     search_type = gr.Dropdown(
-                        choices=["file", "directory", "chunk", "entity", "function", "class", "method"],
+                        choices=["file", "directory", "chunk", "function", "class", "method"],
                         label="Node Type"
                     )
                     search_name = gr.Textbox(label="Name Contains", placeholder="Enter partial name...")
+                    search_limit = gr.Slider(1, 100, value=10, step=1, label="Max Results")
+                    search_page = gr.Slider(1, 100, value=1, step=1, label="Page")
+                    search_partial_allowed = gr.Checkbox(label="Partial Match", value=True)
                     search_type_btn = gr.Button("Search", variant="primary")
                 with gr.Column():
                     search_type_output = gr.Textbox(label="Results", lines=20, max_lines=30)
-            search_type_btn.click(fn=search_by_type_and_name, inputs=[search_type, search_name], outputs=search_type_output)
+            search_type_btn.click(fn=search_by_type_and_name, inputs=[search_type, search_name, search_limit, search_page, search_partial_allowed], outputs=search_type_output)
             gr.Markdown(_tool_doc_md(search_by_type_and_name))
 
         with gr.Tab("🔗 Relationships"):
@@ -1859,10 +2156,12 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     neighbor_node_id = gr.Textbox(label="Node ID", placeholder="Enter node ID...")
+                    neighbor_limit = gr.Slider(1, 100, value=20, step=1, label="Max Results")
+                    neighbor_page = gr.Slider(1, 100, value=1, step=1, label="Page")
                     neighbor_btn = gr.Button("Get Neighbors", variant="primary")
                 with gr.Column():
                     neighbor_output = gr.Textbox(label="Neighbors", lines=20, max_lines=30)
-            neighbor_btn.click(fn=get_neighbors, inputs=neighbor_node_id, outputs=neighbor_output)
+            neighbor_btn.click(fn=get_neighbors, inputs=[neighbor_node_id, neighbor_limit, neighbor_page], outputs=neighbor_output)
             gr.Markdown(_tool_doc_md(get_neighbors))
 
             gr.Markdown("---")
@@ -1881,11 +2180,13 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     related_chunk_id = gr.Textbox(label="Chunk ID", placeholder="Enter chunk ID...")
-                    relation_type = gr.Dropdown(choices=["calls", "contains", "declares", "uses"], label="Relation Type", value="calls")
+                    relation_type = gr.Dropdown(choices=["" , "calls", "contains", "declares", "uses"], label="Relation Type", value="calls")
+                    related_limit = gr.Slider(1, 100, value=20, step=1, label="Results per Page")
+                    related_page = gr.Slider(1, 100, value=1, step=1, label="Page")
                     related_btn = gr.Button("Get Related Chunks", variant="primary")
                 with gr.Column():
                     related_output = gr.Textbox(label="Related Chunks", lines=20, max_lines=30)
-            related_btn.click(fn=get_related_chunks, inputs=[related_chunk_id, relation_type], outputs=related_output)
+            related_btn.click(fn=get_related_chunks, inputs=[related_chunk_id, relation_type, related_limit, related_page], outputs=related_output)
             gr.Markdown(_tool_doc_md(get_related_chunks))
 
             gr.Markdown("---")
@@ -1900,17 +2201,6 @@ def create_gradio_app():
                     path_output = gr.Textbox(label="Path", lines=20, max_lines=30)
             path_btn.click(fn=find_path, inputs=[path_source, path_target, path_depth], outputs=path_output)
             gr.Markdown(_tool_doc_md(find_path))
-
-            gr.Markdown("---")
-            gr.Markdown("### Find Classes Inheriting From")
-            with gr.Row():
-                with gr.Column():
-                    base_class_input = gr.Textbox(label="Base Class Name", placeholder="Enter base class...")
-                    inherit_btn = gr.Button("Find Subclasses", variant="primary")
-                with gr.Column():
-                    inherit_output = gr.Textbox(label="Inheriting Classes", lines=20, max_lines=30)
-            inherit_btn.click(fn=find_classes_inheriting_from, inputs=base_class_input, outputs=inherit_output)
-            gr.Markdown(_tool_doc_md(find_classes_inheriting_from))
 
         with gr.Tab("📖 Context"):
             gr.Markdown("### Get Chunk Context")
@@ -1941,7 +2231,7 @@ def create_gradio_app():
                     subgraph_node = gr.Textbox(label="Center Node ID", placeholder="Enter node ID...")
                     subgraph_depth = gr.Slider(1, 5, value=2, step=1, label="Depth")
                     subgraph_edge_types = gr.Textbox(label="Edge Types (comma-separated, optional)", placeholder="e.g., calls,contains")
-                    subgraph_btn = gr.Button("Extract Subgraph", variant="primary")
+                    subgraph_btn = gr.Button("Retrieve Subgraph", variant="primary")
                 with gr.Column():
                     subgraph_output = gr.Textbox(label="Subgraph", lines=20, max_lines=30)
             subgraph_btn.click(fn=get_subgraph, inputs=[subgraph_node, subgraph_depth, subgraph_edge_types], outputs=subgraph_output)
@@ -1954,11 +2244,12 @@ def create_gradio_app():
                     dir_path = gr.Textbox(label="Directory Path (empty for root)", placeholder="e.g., src/")
                     file_pattern = gr.Textbox(label="Pattern", value="*", placeholder="e.g., *.py")
                     file_recursive = gr.Checkbox(label="Recursive", value=True)
-                    file_limit = gr.Slider(10, 100, value=50, step=10, label="Max Results")
+                    file_limit = gr.Slider(10, 100, value=50, step=10, label="Results per Page")
+                    file_page = gr.Slider(1, 100, value=1, step=1, label="Page")
                     list_files_btn = gr.Button("List Files", variant="primary")
                 with gr.Column():
                     list_files_output = gr.Textbox(label="Files", lines=20, max_lines=30)
-            list_files_btn.click(fn=list_files_in_directory, inputs=[dir_path, file_pattern, file_recursive, file_limit], outputs=list_files_output)
+            list_files_btn.click(fn=list_files_in_directory, inputs=[dir_path, file_pattern, file_recursive, file_limit, file_page], outputs=list_files_output)
             gr.Markdown(_tool_doc_md(list_files_in_directory))
 
             gr.Markdown("---")
@@ -1966,11 +2257,12 @@ def create_gradio_app():
             with gr.Row():
                 with gr.Column():
                     import_module = gr.Textbox(label="Module/Entity Name", placeholder="e.g., torch, numpy...")
-                    import_limit = gr.Slider(10, 50, value=30, step=5, label="Max Results")
+                    import_limit = gr.Slider(10, 50, value=30, step=5, label="Results per Page")
+                    import_page = gr.Slider(1, 100, value=1, step=1, label="Page")
                     find_imports_btn = gr.Button("Find Files", variant="primary")
                 with gr.Column():
                     find_imports_output = gr.Textbox(label="Importing Files", lines=20, max_lines=30)
-            find_imports_btn.click(fn=find_files_importing, inputs=[import_module, import_limit], outputs=find_imports_output)
+            find_imports_btn.click(fn=find_files_importing, inputs=[import_module, import_limit, import_page], outputs=find_imports_output)
             gr.Markdown(_tool_doc_md(find_files_importing))
 
             gr.Markdown("---")

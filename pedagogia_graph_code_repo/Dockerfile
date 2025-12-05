@@ -19,4 +19,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
     && pip install --no-cache-dir libclang
 
 COPY . /app
+
+# Add app to PYTHONPATH so RepoKnowledgeGraphLib can be imported
+ENV PYTHONPATH=/app
+
 CMD ["python"]
